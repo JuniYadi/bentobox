@@ -1,0 +1,7 @@
+# @adr ADR-0013.D5
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
