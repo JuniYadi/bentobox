@@ -24,3 +24,6 @@ Generated file; change the ADRs or the code, then run the `status` command. Code
 | ADR-0013.D3 | Authenticode-sign Windows installers | accepted, no code yet | - | - | - |
 | ADR-0013.D4 | Signed in-app updates via the Tauri updater plugin and release-hosted latest.json | accepted, no code yet | - | - | - |
 | ADR-0013.D5 | Keep CI actions current with Dependabot for github-actions | accepted, no code yet | - | - | - |
+| ADR-0014.D1 | Main window opens maximized and centered, 1280x800 restore size, 1024x640 minimum | proposed | - | - | - |
+| ADR-0015.D1 | Dev profile keeps line tables for our crate and drops debug info for dependencies | proposed | - | - | - |
+| ADR-0015.D2 | Developers share one CARGO_TARGET_DIR across git worktrees | proposed | - | - | - |
