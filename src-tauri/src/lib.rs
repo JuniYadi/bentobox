@@ -2,6 +2,9 @@ use tauri::Manager;
 pub mod agent;
 pub mod db;
 pub mod github;
+pub mod auth;
+pub mod workspace;
+pub mod handoff;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -23,6 +26,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             agent::list_detected_harnesses,
+            auth::auth_status,
+            auth::auth_login,
+            auth::auth_logout,
+            workspace::create_worktree,
+            workspace::list_worktrees,
+            workspace::remove_worktree,
+            handoff::render_handoff,
             github::gh_check_status,
             github::gh_list_issues,
             github::gh_list_prs,
