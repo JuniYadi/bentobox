@@ -6,11 +6,11 @@ Generated file; change the ADRs or the code, then run the `status` command. Code
 
 | ID | Decision | Status | Use cases | Code | Tests |
 |:--|:--|:--|:--|:--|:--|
-| ADR-0001.D1 | Dual-transport ACP and native process adapters with Capability Registry | accepted, no code yet | - | - | - |
+| ADR-0001.D1 | Dual-transport ACP and native process adapters with Capability Registry | accepted, code and test present | - | `src-tauri/src/agent/mod.rs`<br>`src/features/agent/api.ts` | `src-tauri/src/agent/agent_test.rs` |
 | ADR-0002.D1 | Strict separation of session usage and account quota with unavailable states | accepted, no code yet | - | - | - |
 | ADR-0003.D1 | Configurable opt-in Git worktree isolation for parallel task execution | accepted, no code yet | - | - | - |
 | ADR-0004.D1 | Agent-owned authentication lifecycle via native CLIs and system keychains | accepted, no code yet | - | - | - |
-| ADR-0005.D1 | Embedded SQLite for session coordination, task graphs, and redacted event logs | accepted, no code yet | - | - | - |
+| ADR-0005.D1 | Embedded SQLite for session coordination, task graphs, and redacted event logs | accepted, code and test present | - | `src-tauri/src/db/mod.rs` | `src-tauri/src/db/db_test.rs` |
 | ADR-0006.D1 | Tri-mode session architecture supporting orchestrator, plan, and build modes | accepted, code present, no test | - | `src/features/session/types.ts` | - |
 | ADR-0007.D1 | Structured prompt handoff protocol with pointed file references and constraints | accepted, no code yet | - | - | - |
 | ADR-0008.D1 | GitHub CLI integration for querying and browser-opening issues and pull requests | accepted, code present, no test | - | `src-tauri/src/github/mod.rs`<br>`src/features/github/GitHubPanel.tsx`<br>`src/features/github/api.ts` | - |
