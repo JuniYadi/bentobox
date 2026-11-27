@@ -1,0 +1,20 @@
+{
+  "scopes": [],
+  "adrDir": "docs/adr",
+  "prdPaths": ["docs/PRD.md"],
+  "governed": ["src/**/*.{ts,tsx,js,jsx,mjs}", "src-tauri/src/**/*.rs"],
+  "exempt": [
+    "**/*.d.ts",
+    "**/generated/**",
+    "src-tauri/gen/**",
+    "src/main.tsx",
+    "src/vite-env.d.ts",
+    "src/App.tsx",
+    "src-tauri/src/lib.rs",
+    "src-tauri/src/main.rs"
+  ],
+  "protected": [],
+  "testCommand": "",
+  "rules": [],
+  "requireUseCase": false
+}
