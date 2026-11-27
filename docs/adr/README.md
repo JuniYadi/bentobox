@@ -17,3 +17,5 @@ This directory documents foundational architectural decisions for BentoBox.
 | [0011](./0011-teams-with-fallback-chains.md) | Teams with Fallback Chains, Generated from Subscriptions | Accepted |
 | [0012](./0012-inline-harness-routing-syntax.md) | Inline Harness Routing Syntax | Accepted |
 | [0013](./0013-release-build-and-distribution-pipeline.md) | Release Build and Distribution Pipeline | Accepted |
+| [0014](./0014-main-window-launch-geometry.md) | Main Window Launch Geometry | Proposed |
+| [0015](./0015-local-rust-build-footprint.md) | Local Rust Build Footprint | Proposed |
