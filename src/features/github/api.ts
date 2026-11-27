@@ -40,23 +40,13 @@ export async function checkGitHubStatus(): Promise<GhStatus> {
 }
 
 /** @adr ADR-0008.D1 */
-export async function listGitHubIssues(): Promise<GhIssue[]> {
-  try {
-    return await invoke<GhIssue[]>("gh_list_issues");
-  } catch (error) {
-    console.warn("Failed to fetch GitHub issues:", error);
-    return [];
-  }
+export function listGitHubIssues(): Promise<GhIssue[]> {
+  return invoke<GhIssue[]>("gh_list_issues");
 }
 
 /** @adr ADR-0008.D1 */
-export async function listGitHubPullRequests(): Promise<GhPullRequest[]> {
-  try {
-    return await invoke<GhPullRequest[]>("gh_list_prs");
-  } catch (error) {
-    console.warn("Failed to fetch GitHub PRs:", error);
-    return [];
-  }
+export function listGitHubPullRequests(): Promise<GhPullRequest[]> {
+  return invoke<GhPullRequest[]>("gh_list_prs");
 }
 
 /** @adr ADR-0008.D1 */

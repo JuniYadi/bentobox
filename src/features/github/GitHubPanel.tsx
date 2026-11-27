@@ -1,208 +1,111 @@
-import React, { useEffect, useState } from "react";
-import {
-  checkGitHubStatus,
-  listGitHubIssues,
-  listGitHubPullRequests,
-  openGitHubUrl,
-  GhStatus,
-  GhIssue,
-  GhPullRequest,
-} from "./api";
-import { ExternalLink, GitPullRequest, CircleDot, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertCircle, CircleDot, ExternalLink, GitPullRequest } from "lucide-react";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { ScrollArea } from "../../components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { checkGitHubStatus, listGitHubIssues, listGitHubPullRequests, openGitHubUrl, type GhIssue, type GhPullRequest, type GhStatus } from "./api";
+
+type GitHubItem = (GhIssue | GhPullRequest) & { kind: "issue" | "pull request" };
 
 /** @adr ADR-0008.D1 */
 export interface GitHubPanelProps {
-  onSelectIssue?: (issue: GhIssue) => void;
+  onUseAsPrompt?: (prompt: string) => void;
+}
+
+
+function itemKey(item: GitHubItem): string {
+  return `${item.kind}-${item.number}`;
 }
 
 /** @adr ADR-0008.D1 */
-export const GitHubPanel: React.FC<GitHubPanelProps> = ({ onSelectIssue }) => {
+export function GitHubPanel({ onUseAsPrompt }: GitHubPanelProps) {
   const [status, setStatus] = useState<GhStatus | null>(null);
-  const [tab, setTab] = useState<"issues" | "prs">("issues");
-  const [issues, setIssues] = useState<GhIssue[]>([]);
-  const [prs, setPrs] = useState<GhPullRequest[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const loadData = async () => {
-    setLoading(true);
-    const s = await checkGitHubStatus();
-    setStatus(s);
-    if (s.authenticated) {
-      const [issueList, prList] = await Promise.all([
-        listGitHubIssues(),
-        listGitHubPullRequests(),
-      ]);
-      setIssues(issueList);
-      setPrs(prList);
-    }
-    setLoading(false);
-  };
+  const [items, setItems] = useState<GitHubItem[]>([]);
+  const [opened, setOpened] = useState<GitHubItem[]>([]);
+  const [selectedKey, setSelectedKey] = useState("list");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadData();
+    let current = true;
+    void (async () => {
+      const result = await checkGitHubStatus();
+      if (!current) return;
+      setStatus(result);
+      if (!result.installed || !result.authenticated) {
+        setLoading(false);
+        return;
+      }
+      try {
+        const [issues, prs] = await Promise.all([listGitHubIssues(), listGitHubPullRequests()]);
+        if (current) setItems([
+          ...issues.map((item) => ({ ...item, kind: "issue" as const })),
+          ...prs.map((item) => ({ ...item, kind: "pull request" as const })),
+        ]);
+      } catch (cause) {
+        if (current) setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (current) setLoading(false);
+      }
+    })();
+    return () => { current = false; };
   }, []);
 
+  const selected = opened.find((item) => itemKey(item) === selectedKey);
+  const unavailable = status && (!status.installed || !status.authenticated);
+  const openItem = (item: GitHubItem) => {
+    const key = itemKey(item);
+    setOpened((previous) => previous.some((entry) => itemKey(entry) === key) ? previous : [...previous, item]);
+    setSelectedKey(key);
+  };
+
   return (
-    <div className="github-panel" style={{ display: "flex", flexDirection: "column", height: "100%", gap: "8px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: "4px", borderBottom: "1px solid #333" }}>
-        <span style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#888" }}>
-          GitHub Integration
-        </span>
-        <button
-          onClick={loadData}
-          disabled={loading}
-          style={{ background: "transparent", border: "none", color: "#aaa", cursor: "pointer", display: "flex", alignItems: "center" }}
-          title="Refresh GitHub data"
-        >
-          <RefreshCw size={12} className={loading ? "spin" : ""} />
-        </button>
-      </div>
-
-      {status && !status.authenticated ? (
-        <div style={{ padding: "8px", background: "#2a1e17", border: "1px solid #633", borderRadius: "4px", fontSize: "11px", color: "#f88" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 600 }}>
-            <AlertTriangle size={14} color="#f88" />
-            <span>GitHub CLI Notice</span>
-          </div>
-          <p style={{ margin: "4px 0 0 0", color: "#ccc" }}>{status.message}</p>
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <Tabs value={selected ? selectedKey : "list"} onValueChange={setSelectedKey} className="min-h-0 flex-1 gap-0">
+        <div className="flex h-12 shrink-0 items-center border-b px-2">
+          <TabsList variant="line" className="h-full max-w-full overflow-x-auto">
+            <TabsTrigger value="list">Issues &amp; PRs</TabsTrigger>
+            {opened.map((item) => <TabsTrigger key={itemKey(item)} value={itemKey(item)} aria-label={`${item.kind} #${item.number}`}>#{item.number}</TabsTrigger>)}
+          </TabsList>
         </div>
-      ) : status?.authenticated ? (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: "#4ade80" }}>
-          <CheckCircle2 size={12} />
-          <span>Connected as @{status.username}</span>
-        </div>
-      ) : null}
-
-      <div style={{ display: "flex", gap: "4px", borderBottom: "1px solid #282828" }}>
-        <button
-          onClick={() => setTab("issues")}
-          style={{
-            flex: 1,
-            padding: "4px 8px",
-            fontSize: "11px",
-            background: tab === "issues" ? "#282828" : "transparent",
-            color: tab === "issues" ? "#fff" : "#888",
-            border: "none",
-            borderRadius: "4px 4px 0 0",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "4px",
-          }}
-        >
-          <CircleDot size={12} /> Issues ({issues.length})
-        </button>
-        <button
-          onClick={() => setTab("prs")}
-          style={{
-            flex: 1,
-            padding: "4px 8px",
-            fontSize: "11px",
-            background: tab === "prs" ? "#282828" : "transparent",
-            color: tab === "prs" ? "#fff" : "#888",
-            border: "none",
-            borderRadius: "4px 4px 0 0",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "4px",
-          }}
-        >
-          <GitPullRequest size={12} /> PRs ({prs.length})
-        </button>
-      </div>
-
-      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "6px" }}>
-        {tab === "issues" ? (
-          issues.length === 0 ? (
-            <div style={{ fontSize: "11px", color: "#666", padding: "8px 0" }}>
-              {status?.authenticated ? "No open issues found." : "Unavailable until gh auth login is complete."}
+        <TabsContent value="list" className="min-h-0 overflow-hidden">
+          {unavailable ? (
+            <div className="space-y-2 p-4 text-sm">
+              <p className="flex items-center gap-2 text-muted-foreground"><AlertCircle className="size-4" />{status.message}</p>
+              <p className="text-muted-foreground">Run <code>gh auth login</code> to connect GitHub.</p>
             </div>
-          ) : (
-            issues.map((issue) => (
-              <div
-                key={issue.number}
-                style={{
-                  padding: "6px 8px",
-                  background: "#181818",
-                  border: "1px solid #282828",
-                  borderRadius: "4px",
-                  fontSize: "11px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "4px",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "6px" }}>
-                  <span style={{ fontWeight: 600, color: "#ddd" }}>#{issue.number}</span>
-                  <button
-                    onClick={() => openGitHubUrl(issue.url)}
-                    style={{ background: "transparent", border: "none", color: "#888", cursor: "pointer", padding: 0 }}
-                    title="Open in browser"
-                  >
-                    <ExternalLink size={12} />
-                  </button>
-                </div>
-                <div style={{ color: "#bbb", lineHeight: "1.3" }}>{issue.title}</div>
-                {onSelectIssue && (
-                  <button
-                    onClick={() => onSelectIssue(issue)}
-                    style={{
-                      alignSelf: "flex-start",
-                      fontSize: "10px",
-                      padding: "2px 6px",
-                      background: "#223",
-                      border: "1px solid #335",
-                      color: "#99f",
-                      borderRadius: "3px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Add to Orchestrator
-                  </button>
-                )}
-              </div>
-            ))
-          )
-        ) : prs.length === 0 ? (
-          <div style={{ fontSize: "11px", color: "#666", padding: "8px 0" }}>
-            {status?.authenticated ? "No open pull requests found." : "Unavailable until gh auth login is complete."}
-          </div>
-        ) : (
-          prs.map((pr) => (
-            <div
-              key={pr.number}
-              style={{
-                padding: "6px 8px",
-                background: "#181818",
-                border: "1px solid #282828",
-                borderRadius: "4px",
-                fontSize: "11px",
-                display: "flex",
-                flexDirection: "column",
-                gap: "4px",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "6px" }}>
-                <span style={{ fontWeight: 600, color: "#a855f7" }}>#{pr.number}</span>
-                <button
-                  onClick={() => openGitHubUrl(pr.url)}
-                  style={{ background: "transparent", border: "none", color: "#888", cursor: "pointer", padding: 0 }}
-                  title="Open in browser"
-                >
-                  <ExternalLink size={12} />
+          ) : loading ? <p className="p-4 text-sm text-muted-foreground">Loading GitHub items…</p> : error ? (
+            <p className="p-4 text-sm text-muted-foreground">GitHub items unavailable: {error}</p>
+          ) : <ScrollArea className="h-full">
+            {items.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No issues or pull requests.</p> : <ul className="space-y-1 p-2">
+              {items.map((item) => <li key={itemKey(item)}>
+                <button type="button" onClick={() => openItem(item)} className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-accent">
+                  {item.kind === "issue" ? <CircleDot className="size-4 shrink-0 text-muted-foreground" /> : <GitPullRequest className="size-4 shrink-0 text-muted-foreground" />}
+                  <span className="min-w-0 flex-1 truncate">{item.title}</span><span className="shrink-0 text-xs text-muted-foreground">#{item.number}</span>
                 </button>
+              </li>)}
+            </ul>}
+          </ScrollArea>}
+        </TabsContent>
+        {opened.map((item) => <TabsContent key={itemKey(item)} value={itemKey(item)} className="min-h-0 overflow-auto p-4">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <h2 className="text-base font-medium">{item.title}</h2>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span aria-hidden="true" className={`size-2 rounded-full ${item.state.toLowerCase() === "open" ? "bg-success" : "bg-muted-foreground"}`} />
+                <span className="state-label">{item.state}</span><span>#{item.number}</span><Badge variant="outline">{item.kind}</Badge>
               </div>
-              <div style={{ color: "#bbb", lineHeight: "1.3" }}>{pr.title}</div>
-              {pr.headRefName && (
-                <div style={{ fontSize: "10px", color: "#888" }}>Branch: {pr.headRefName}</div>
-              )}
+              {"headRefName" in item && item.headRefName && <p className="truncate text-xs text-muted-foreground">{item.headRefName}</p>}
             </div>
-          ))
-        )}
-      </div>
-    </div>
+            <p className="text-sm text-muted-foreground">Details aren't loaded yet.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => void openGitHubUrl(item.url)}><ExternalLink />Open in browser</Button>
+              <Button size="sm" onClick={() => onUseAsPrompt?.(`${item.kind} #${item.number}: ${item.title}\n${item.url}`)}>Use as prompt</Button>
+            </div>
+          </div>
+        </TabsContent>)}
+      </Tabs>
+    </section>
   );
-};
+}

@@ -17,6 +17,17 @@ describe("[ADR-0016.D2] session glyphs", () => {
   test("returns running for an active task", () => {
     expect(sessionGlyph(summary("Build", ["running"]))).toBe("running");
   });
+  test("returns planning for Build before a task runs", () => {
+    expect(sessionGlyph(summary("Build", ["queued"]))).toBe("planning");
+    expect(sessionGlyph(summary("Build", []))).toBe("planning");
+  });
+  test("returns needs-approval for review", () => {
+    expect(sessionGlyph(summary("Review", ["completed"]))).toBe("needs-approval");
+  });
+  test("returns idle for rejected or cancelled plans", () => {
+    expect(sessionGlyph(summary("Rejected", []))).toBe("idle");
+    expect(sessionGlyph(summary("Cancelled", ["cancelled"]))).toBe("idle");
+  });
   test("returns planning for an unapproved plan", () => {
     expect(sessionGlyph(summary("Plan", ["queued"]))).toBe("planning");
   });

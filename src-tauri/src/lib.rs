@@ -43,6 +43,8 @@ pub fn run() {
             project::project_list,
             project::project_remove,
             project::project_sessions,
+            project::project_unassigned_sessions,
+            project::project_tree,
             session::session_propose_plan,
             session::session_revise_plan,
             session::session_approve_plan,
