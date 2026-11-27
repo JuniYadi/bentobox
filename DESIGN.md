@@ -1,49 +1,47 @@
 ---
-name: Default Studio System
-version: 1
+name: BentoBox (shadcn zinc)
+version: 2
 colors:
-  bg: "#0b0c0e"
-  surface: "#14161a"
-  surface-elevated: "#1c1f26"
-  border: "#262a34"
-  fg: "#f2f4f8"
-  fg-muted: "#9aa3b2"
-  accent: "#3b82f6"
-  accent-fg: "#ffffff"
+  bg: "#09090b"
+  surface: "#111113"
+  surface-elevated: "#27272a"
+  border: "#27272a"
+  input: "#3f3f46"
+  ring: "#71717a"
+  fg: "#fafafa"
+  fg-muted: "#a1a1aa"
+  accent: "#fafafa"
+  accent-fg: "#18181b"
   success: "#22c55e"
   warning: "#f59e0b"
   danger: "#ef4444"
 typography:
-  font-sans: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-  font-display: "'Instrument Serif', 'Iowan Old Style', Georgia, serif"
-  font-mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
-  scale-ratio: 1.25
-  body-size: "15px"
+  font-sans: "'Geist', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif"
+  font-mono: "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
+  body-size: "14px"
 radii:
-  sm: "6px"
-  md: "10px"
-  lg: "16px"
-  pill: "999px"
+  sm: "4px"
+  md: "6px"
+  lg: "8px"
+  pill: "9999px"
 spacing:
   unit: "4px"
-  card-pad: "20px"
-  section-gap: "28px"
 motion:
-  fast: "120ms cubic-bezier(0.2, 0, 0, 1)"
-  base: "220ms cubic-bezier(0.2, 0, 0, 1)"
+  fast: "150ms cubic-bezier(0.4, 0, 0.2, 1)"
 ---
 
 # Design System
 
-Single source of truth for UI tokens and visual grammar. Edit frontmatter tokens here; regenerate `.design/tokens.css` from them.
+Tailwind + shadcn/ui, dark zinc theme. Edit frontmatter tokens here; regenerate `.design/tokens.css` from them.
 
 ## Aesthetic Direction
-- **Posture:** Dense, crisp dark-first operational UI with editorial display headlines when presenting narrative or hero states.
-- **Depth:** Use 1px hairline borders (`--color-border`) and stepped surface luminance (`--color-bg` → `--color-surface` → `--color-surface-elevated`) for hierarchy; keep shadows subtle and reserved for floating overlays.
-- **Typography:** Sans-serif for UI controls and tables, tabular numerals (`font-variant-numeric: tabular-nums`) for metrics and counters, monospace for IDs/timestamps/code, display serif strictly for hero headlines ≥ 36px.
-- **Color discipline:** Reserve `--color-accent` for primary actions and active states; keep ≥ 85% of viewport neutral. Semantic colors (`--color-success`, `--color-warning`, `--color-danger`) carry status meaning only.
+- **Neutral first:** Almost everything is zinc. The primary button is near-white on dark, matching shadcn's default theme. No brand blue, no gradients, no glow.
+- **Depth:** 1px borders and one step of surface change. No drop shadows except on popovers and dialogs.
+- **Typography:** 14px body, 12px secondary text, 11px meta. Medium weight for labels, never bold in lists. Monospace only for branches, paths, diff counts and timers.
+- **Status color:** Green, amber and red appear only as 6–8px dots or small icons that carry status. Never as fills behind text.
 
-## Layout Grammar
-- **Grid:** 4px base rhythm; align card padding (`--space-card-pad`) and gaps (`--space-section-gap`) to multiples of 4px.
-- **Hierarchy:** One primary focal region per frame, headline-to-body ratio ≥ 2.2x on landing/hero views, ≥ 1.6x on app views.
-- **Content realism:** Populate frames with realistic domain copy, plausible metrics, and real SVG icons (clean 16–20px stroked paths). Mark missing brand imagery with explicitly labeled gray wireframe placeholders rather than fabricated assets.
+## Component Grammar
+- Use shadcn patterns: Sidebar (header, group label, menu, sub-menu, footer), Button (default, outline, ghost), Badge (outline), Tabs, Switch, Input, Card.
+- List rows are 28–32px tall, single line, with a truncating title and right-aligned muted meta.
+- Icons are 16px, 1.5px stroke, lucide style.
+- Spacing is the Tailwind 4px scale; padding 8/12/16, gaps 4/8.
