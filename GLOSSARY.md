@@ -75,3 +75,25 @@ _Avoid_: Token usage, context size
 **GitHub Integration**:
 A system bridge backed by the GitHub CLI (`gh`) for inspecting issues and pull requests, opening them in the browser, and binding them to workspace tasks.
 _Avoid_: Octokit client, web scraper
+
+### Teams and Routing
+
+**Plan**:
+An Orchestrator's proposal for a goal (tasks, assigned team or harness, worktrees, dependencies, estimated cost) that must be approved before any Sub-Agent starts.
+_Avoid_: Spec, todo list, draft
+
+**Team**:
+A named Fallback Chain assigned to a Role, selectable per session.
+_Avoid_: Profile, preset, model group
+
+**Role**:
+The job a Team serves: orchestrator, sub-agents, or review. Each Role has one default Team.
+_Avoid_: Persona, Session Mode
+
+**Fallback Chain**:
+An ordered list of `harness/model:effort` steps; when a step is rate-limited, out of quota, logged out, or offline, the next step is used.
+_Avoid_: Retry list, failover pool
+
+**Inline Route**:
+A `@harness/model:effort` or `@team:name` mention in a message that overrides the session Team for that message only.
+_Avoid_: Tag, slash command
