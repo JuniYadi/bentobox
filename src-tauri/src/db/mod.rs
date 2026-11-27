@@ -9,9 +9,10 @@ use std::{
 };
 use tauri::State;
 
-const SCHEMA_VERSION: i64 = 1;
+const LATEST_SCHEMA_VERSION: i64 = 2;
 
-pub struct Store(Mutex<Connection>);
+#[derive(Clone)]
+pub struct Store(std::sync::Arc<Mutex<Connection>>);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Event {
@@ -32,7 +33,7 @@ impl Store {
         let version: i64 = tx
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(|e| e.to_string())?;
-        if version > SCHEMA_VERSION {
+        if version > LATEST_SCHEMA_VERSION {
             return Err(format!("unsupported database schema version {version}"));
         }
         if version == 0 {
@@ -46,15 +47,26 @@ impl Store {
                  PRAGMA user_version = 1;"
             ).map_err(|e| e.to_string())?;
         }
+        if version < 2 {
+            tx.execute_batch(
+                "CREATE TABLE session_plans (session_id INTEGER PRIMARY KEY REFERENCES sessions(id), plan TEXT NOT NULL);
+                 ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE sessions ADD COLUMN workspace_path TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE sessions ADD COLUMN opt_in_worktree INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT '';
+                 PRAGMA user_version = 2;"
+            ).map_err(|e| e.to_string())?;
+        }
         tx.commit().map_err(|e| e.to_string())?;
-        Ok(Self(Mutex::new(conn)))
+        Ok(Self(std::sync::Arc::new(Mutex::new(conn))))
     }
 
-    fn connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+    pub(crate) fn connection(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
         self.0
             .lock()
             .map_err(|_| "database lock poisoned".to_string())
     }
+
 
     pub fn create_session(&self, state: &str) -> Result<i64, String> {
         let conn = self.connection()?;
@@ -159,6 +171,7 @@ impl Store {
     }
 }
 
+
 fn redact_text(text: &str) -> String {
     static PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         [
@@ -231,10 +244,6 @@ fn redact_value(value: &mut Value) {
 }
 
 #[tauri::command]
-pub fn db_create_session(store: State<'_, Store>, state: String) -> Result<i64, String> {
-    store.create_session(&state)
-}
-#[tauri::command]
 pub fn db_create_task(
     store: State<'_, Store>,
     session_id: i64,
@@ -260,7 +269,12 @@ pub fn db_append_event(
     kind: String,
     payload: Value,
 ) -> Result<i64, String> {
-    store.append_event(session_id, task_id, &kind, payload)
+    append_frontend_event(store.inner(), session_id, task_id, &kind, payload)
+}
+
+fn append_frontend_event(store: &Store, session_id: i64, task_id: Option<i64>, kind: &str, payload: Value) -> Result<i64, String> {
+    if kind == "session_usage" { return Err("session_usage is reserved for usage recording".into()); }
+    store.append_event(session_id, task_id, kind, payload)
 }
 #[tauri::command]
 pub fn db_events(

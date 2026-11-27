@@ -13,20 +13,6 @@ export interface DbEvent {
   created_at: string;
 }
 
-/** @adr ADR-0005.D1 */
-export function dbCreateSession(state: string): Promise<number> {
-  return invoke<number>("db_create_session", { state });
-}
-
-/** @adr ADR-0005.D1 */
-export function dbCreateTask(sessionId: number, title: string, state: string): Promise<number> {
-  return invoke<number>("db_create_task", { sessionId, title, state });
-}
-
-/** @adr ADR-0005.D1 */
-export function dbAddDependency(sessionId: number, taskId: number, dependsOnId: number): Promise<void> {
-  return invoke<void>("db_add_dependency", { sessionId, taskId, dependsOnId });
-}
 
 /** @adr ADR-0005.D1 */
 export function dbAppendEvent(sessionId: number, taskId: number | null, kind: string, payload: JsonValue): Promise<number> {

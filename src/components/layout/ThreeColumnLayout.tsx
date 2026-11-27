@@ -2,19 +2,21 @@ import React from "react";
 import { SidebarLeft } from "./SidebarLeft";
 import { ContentArea } from "./ContentArea";
 import { SidebarRight } from "./SidebarRight";
-import { Session, SessionMode } from "../../features/session/types";
+import { Session } from "../../features/session/types";
 import { GhIssue } from "../../features/github/api";
 
 /** @adr ADR-0009.D1 */
 export interface ThreeColumnLayoutProps {
   sessions: Session[];
-  activeSession: Session;
-  onSelectSession: (id: string) => void;
+  activeSession: Session | null;
+  onSelectSession: (id: number) => void;
   onCreateSession: () => void;
-  onModeChange: (mode: SessionMode) => void;
   onToggleWorktree: () => void;
-  onDispatchTask: (prompt: string, optInWorktree: boolean) => void;
   onSelectGitHubIssue?: (issue: GhIssue) => void;
+  prompt: string;
+  onPromptChange: (prompt: string) => void;
+  emptyMessage: string;
+  error: string | null;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   onToggleLeftCollapse: () => void;
@@ -27,10 +29,12 @@ export const ThreeColumnLayout: React.FC<ThreeColumnLayoutProps> = ({
   activeSession,
   onSelectSession,
   onCreateSession,
-  onModeChange,
   onToggleWorktree,
-  onDispatchTask,
   onSelectGitHubIssue,
+  prompt,
+  onPromptChange,
+  emptyMessage,
+  error,
   leftCollapsed,
   rightCollapsed,
   onToggleLeftCollapse,
@@ -52,7 +56,7 @@ export const ThreeColumnLayout: React.FC<ThreeColumnLayoutProps> = ({
     >
       <SidebarLeft
         sessions={sessions}
-        activeSessionId={activeSession.id}
+        activeSessionId={activeSession?.id ?? null}
         onSelectSession={onSelectSession}
         onCreateSession={onCreateSession}
         onSelectGitHubIssue={onSelectGitHubIssue}
@@ -61,12 +65,16 @@ export const ThreeColumnLayout: React.FC<ThreeColumnLayoutProps> = ({
       />
       <ContentArea
         session={activeSession}
-        onModeChange={onModeChange}
         onToggleWorktree={onToggleWorktree}
-        onDispatchTask={onDispatchTask}
+        onCreateSession={onCreateSession}
+        prompt={prompt}
+        onPromptChange={onPromptChange}
+        emptyMessage={emptyMessage}
+        error={error}
       />
       <SidebarRight
-        subAgents={activeSession.subAgents}
+        sessionId={activeSession?.id ?? null}
+        subAgents={activeSession?.subAgents ?? []}
         collapsed={rightCollapsed}
         onToggleCollapse={onToggleRightCollapse}
       />

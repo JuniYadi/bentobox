@@ -1,7 +1,30 @@
-/** @adr ADR-0006.D1 */
-export type SessionMode = "orchestrator" | "plan" | "build";
+/** @adr ADR-0010.D1 */
+export type SessionPhase = "Plan" | "Approve" | "Build" | "Review" | "Rejected" | "Closed" | "Cancelled";
 
-/** @adr ADR-0006.D1 */
+/** @adr ADR-0010.D1 */
+export interface PlanTask {
+  id: string;
+  title: string;
+  team: string;
+  harness: string;
+  worktree: boolean;
+  dependencies: string[];
+  estimated_tokens: number | null;
+  status: "queued" | "running" | "review" | "completed" | "failed" | "cancelled";
+}
+
+/** @adr ADR-0010.D1 */
+export interface Plan {
+  session_id: number;
+  revision: number;
+  phase: SessionPhase;
+  approved: boolean;
+  estimated_tokens: number | null;
+  tasks_started: boolean;
+  tasks: PlanTask[];
+}
+
+/** @adr ADR-0010.D1 */
 export interface SubAgentTask {
   id: string;
   title: string;
@@ -12,15 +35,11 @@ export interface SubAgentTask {
   handoffSummary?: string;
 }
 
-/** @adr ADR-0006.D1 */
+/** @adr ADR-0010.D1 */
 export interface Session {
-  id: string;
+  id: number;
   title: string;
-  activeMode: SessionMode;
   workspacePath: string;
   optInWorktree: boolean;
   subAgents: SubAgentTask[];
 }
-
-/** @adr ADR-0006.D1 */
-export const DEFAULT_SESSION_MODE: SessionMode = "orchestrator";

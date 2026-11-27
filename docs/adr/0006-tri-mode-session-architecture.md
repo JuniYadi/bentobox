@@ -3,7 +3,8 @@ adr: ADR-0006
 decisions:
   D1:
     title: Tri-mode session architecture supporting orchestrator, plan, and build modes
-    state: accepted
+    state: superseded
+    superseded_by: ADR-0010.D1
     paths: ["src-tauri/src/session/**", "src/features/session/**"]
     protected: false
     use_cases: []

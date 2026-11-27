@@ -17,7 +17,7 @@ fn migrations_are_idempotent() {
     assert_eq!(
         conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .unwrap(),
-        1
+        LATEST_SCHEMA_VERSION
     );
     assert_eq!(
         conn.query_row("SELECT state FROM sessions WHERE id = ?1", [session], |r| r
@@ -28,6 +28,40 @@ fn migrations_are_idempotent() {
     drop(conn);
     drop(reopened);
     std::fs::remove_file(path).unwrap();
+}
+
+// [ADR-0005.D1] Existing version-1 databases upgrade without losing session data.
+#[test]
+fn version_one_database_upgrades_to_latest_schema() {
+    let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("bentobox-db-upgrade-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("db.sqlite");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("CREATE TABLE sessions (id INTEGER PRIMARY KEY, state TEXT NOT NULL); CREATE TABLE tasks (id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL REFERENCES sessions(id), title TEXT NOT NULL, state TEXT NOT NULL, UNIQUE(id, session_id)); CREATE TABLE task_dependencies (session_id INTEGER NOT NULL, task_id INTEGER NOT NULL, depends_on_id INTEGER NOT NULL, PRIMARY KEY(task_id, depends_on_id), FOREIGN KEY(task_id, session_id) REFERENCES tasks(id, session_id), FOREIGN KEY(depends_on_id, session_id) REFERENCES tasks(id, session_id), CHECK(task_id != depends_on_id)); CREATE TABLE events (id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL REFERENCES sessions(id), task_id INTEGER, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), FOREIGN KEY(task_id, session_id) REFERENCES tasks(id, session_id)); CREATE INDEX events_session_id_id ON events(session_id, id); CREATE TABLE capability_cache (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO sessions (id, state) VALUES (7, 'active'); PRAGMA user_version = 1;").unwrap();
+    drop(conn);
+    let store = Store::open(&path).unwrap();
+    let conn = store.connection().unwrap();
+    assert_eq!(conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), LATEST_SCHEMA_VERSION);
+    assert_eq!(conn.query_row("SELECT state FROM sessions WHERE id = 7", [], |row| row.get::<_, String>(0)).unwrap(), "active");
+    assert!(conn.query_row("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_plans'", [], |_| Ok(())).is_ok());
+    for table in ["plan_tasks", "plan_task_dependencies"] {
+        assert!(conn.query_row("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1", [table], |_| Ok(())).optional().unwrap().is_none());
+    }
+    drop(conn);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// [ADR-0010.D1] Frontend event injection cannot forge authoritative usage records.
+#[test]
+fn frontend_cannot_append_reserved_session_usage() {
+    let store = Store::open(":memory:").unwrap();
+    let session = store.create_session("active").unwrap();
+    assert!(append_frontend_event(&store, session, None, "session_usage", json!({"input_tokens": 123})).is_err());
+    assert!(store.events(session, 0, 10).unwrap().is_empty());
+    assert!(append_frontend_event(&store, session, None, "tool", json!({})).is_ok());
+    assert!(store.append_event(session, None, "session_usage", json!({"input_tokens": 123})).is_ok());
 }
 
 // [ADR-0005.D1] Tasks and event references stay in their session; dependency graphs are acyclic.
