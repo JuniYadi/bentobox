@@ -3,7 +3,7 @@ adr: ADR-0001
 decisions:
   D1:
     title: Dual-transport ACP and native process adapters with Capability Registry
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/agent/**", "src/features/agent/**"]
     protected: false
     use_cases: []

@@ -3,7 +3,7 @@ adr: ADR-0005
 decisions:
   D1:
     title: Embedded SQLite for session coordination, task graphs, and redacted event logs
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/db/**", "src-tauri/src/session/**"]
     protected: false
     use_cases: []

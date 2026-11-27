@@ -3,7 +3,7 @@ adr: ADR-0008
 decisions:
   D1:
     title: GitHub CLI integration for querying and browser-opening issues and pull requests
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/github/**", "src/features/github/**"]
     protected: false
     use_cases: []

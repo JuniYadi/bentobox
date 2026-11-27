@@ -3,7 +3,7 @@ adr: ADR-0007
 decisions:
   D1:
     title: Structured prompt handoff protocol with pointed file references and constraints
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/handoff/**", "src/features/handoff/**"]
     protected: false
     use_cases: []

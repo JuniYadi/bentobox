@@ -3,7 +3,7 @@ adr: ADR-0009
 decisions:
   D1:
     title: Three-column responsive desktop layout (Sidebar Left | Content | Sidebar Right)
-    state: proposed
+    state: accepted
     paths: ["src/components/layout/**", "src/App.tsx"]
     protected: false
     use_cases: []

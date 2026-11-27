@@ -3,7 +3,7 @@ adr: ADR-0003
 decisions:
   D1:
     title: Configurable opt-in Git worktree isolation for parallel task execution
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/workspace/**", "src/features/workspace/**"]
     protected: false
     use_cases: []

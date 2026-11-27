@@ -3,7 +3,7 @@ adr: ADR-0002
 decisions:
   D1:
     title: Strict separation of session usage and account quota with unavailable states
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/usage/**", "src/features/usage/**"]
     protected: false
     use_cases: []

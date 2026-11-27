@@ -3,7 +3,7 @@ adr: ADR-0004
 decisions:
   D1:
     title: Agent-owned authentication lifecycle via native CLIs and system keychains
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/auth/**", "src/features/auth/**"]
     protected: false
     use_cases: []
