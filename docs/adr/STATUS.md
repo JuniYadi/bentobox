@@ -19,8 +19,8 @@ Generated file; change the ADRs or the code, then run the `status` command. Code
 | ADR-0011.D1 | Teams bind a role to an ordered harness/model:effort fallback chain | accepted, no code yet | - | - | - |
 | ADR-0011.D2 | Teams are generated from detected subscriptions by user rules, previewed before apply | accepted, no code yet | - | - | - |
 | ADR-0012.D1 | Inline per-message routing via @harness/model[:effort] or @team:name overrides the session team | accepted, no code yet | - | - | - |
-| ADR-0013.D1 | GitHub Release-triggered multi-platform Tauri build pipeline with tag/version guard | proposed | - | - | - |
-| ADR-0013.D2 | Sign and notarize macOS bundles with an Apple Developer ID | proposed | - | - | - |
-| ADR-0013.D3 | Authenticode-sign Windows installers | proposed | - | - | - |
-| ADR-0013.D4 | Signed in-app updates via the Tauri updater plugin and release-hosted latest.json | proposed | - | - | - |
-| ADR-0013.D5 | Keep CI actions current with Dependabot for github-actions | proposed | - | - | - |
+| ADR-0013.D1 | GitHub Release-triggered multi-platform Tauri build pipeline with tag/version guard | accepted, no code yet | - | - | - |
+| ADR-0013.D2 | Sign and notarize macOS bundles with an Apple Developer ID | accepted, no code yet | - | - | - |
+| ADR-0013.D3 | Authenticode-sign Windows installers | accepted, no code yet | - | - | - |
+| ADR-0013.D4 | Signed in-app updates via the Tauri updater plugin and release-hosted latest.json | accepted, no code yet | - | - | - |
+| ADR-0013.D5 | Keep CI actions current with Dependabot for github-actions | accepted, no code yet | - | - | - |

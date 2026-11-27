@@ -16,3 +16,4 @@ This directory documents foundational architectural decisions for BentoBox.
 | [0010](./0010-orchestrator-only-sessions-with-plan-approval.md) | Orchestrator-Only Sessions with a Plan Approval Gate (supersedes 0006 once session code migrates) | Accepted |
 | [0011](./0011-teams-with-fallback-chains.md) | Teams with Fallback Chains, Generated from Subscriptions | Accepted |
 | [0012](./0012-inline-harness-routing-syntax.md) | Inline Harness Routing Syntax | Accepted |
+| [0013](./0013-release-build-and-distribution-pipeline.md) | Release Build and Distribution Pipeline | Accepted |
