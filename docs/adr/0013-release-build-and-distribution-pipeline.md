@@ -3,31 +3,31 @@ adr: ADR-0013
 decisions:
   D1:
     title: GitHub Release-triggered multi-platform Tauri build pipeline with tag/version guard
-    state: proposed
+    state: accepted
     paths: [".github/workflows/release.yml"]
     protected: false
     use_cases: []
   D2:
     title: Sign and notarize macOS bundles with an Apple Developer ID
-    state: proposed
+    state: accepted
     paths: [".github/workflows/release.yml", "src-tauri/tauri.conf.json"]
     protected: false
     use_cases: []
   D3:
     title: Authenticode-sign Windows installers
-    state: proposed
+    state: accepted
     paths: [".github/workflows/release.yml", "src-tauri/tauri.conf.json"]
     protected: false
     use_cases: []
   D4:
     title: Signed in-app updates via the Tauri updater plugin and release-hosted latest.json
-    state: proposed
+    state: accepted
     paths: [".github/workflows/release.yml", "src-tauri/tauri.conf.json", "src-tauri/src/**"]
     protected: false
     use_cases: []
   D5:
     title: Keep CI actions current with Dependabot for github-actions
-    state: proposed
+    state: accepted
     paths: [".github/dependabot.yml", ".github/workflows/**"]
     protected: false
     use_cases: []
