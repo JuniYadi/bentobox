@@ -4,7 +4,9 @@ pub mod db;
 pub mod github;
 pub mod auth;
 pub mod workspace;
+pub mod usage;
 pub mod handoff;
+pub mod session;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -36,12 +38,23 @@ pub fn run() {
             github::gh_check_status,
             github::gh_list_issues,
             github::gh_list_prs,
-            db::db_create_session,
-            db::db_create_task,
-            db::db_add_dependency,
+            session::session_propose_plan,
+            session::session_revise_plan,
+            session::session_approve_plan,
+            session::session_reject_plan,
+            session::session_task_transition,
+            session::session_get_plan,
+            session::session_cancel_plan,
+            session::session_accept_plan,
+            session::session_create,
+            session::session_list,
+            session::session_set_worktree,
             db::db_append_event,
             db::db_events,
             db::db_set_capability,
+            usage::record_session_usage,
+            usage::get_session_usage,
+            usage::get_account_quota,
             db::db_capability
         ])
         .run(tauri::generate_context!())

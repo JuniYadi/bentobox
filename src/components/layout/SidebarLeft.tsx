@@ -1,5 +1,5 @@
 import React from "react";
-import { FolderGit2, Plus, MessageSquare, ChevronLeft, Bot } from "lucide-react";
+import { FolderGit2, Plus, MessageSquare, ChevronLeft } from "lucide-react";
 import { Session } from "../../features/session/types";
 import { GitHubPanel } from "../../features/github/GitHubPanel";
 import { GhIssue } from "../../features/github/api";
@@ -7,8 +7,8 @@ import { GhIssue } from "../../features/github/api";
 /** @adr ADR-0009.D1 */
 export interface SidebarLeftProps {
   sessions: Session[];
-  activeSessionId: string;
-  onSelectSession: (id: string) => void;
+  activeSessionId: number | null;
+  onSelectSession: (id: number) => void;
   onCreateSession: () => void;
   onSelectGitHubIssue?: (issue: GhIssue) => void;
   collapsed: boolean;
@@ -132,19 +132,6 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {session.title}
               </span>
-              <span
-                style={{
-                  fontSize: "9px",
-                  padding: "1px 4px",
-                  borderRadius: "3px",
-                  background: session.activeMode === "orchestrator" ? "#3b82f6" : session.activeMode === "plan" ? "#eab308" : "#22c55e",
-                  color: "#000",
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                }}
-              >
-                {session.activeMode.slice(0, 4)}
-              </span>
             </button>
           ))}
         </div>
@@ -154,16 +141,8 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
         <GitHubPanel onSelectIssue={onSelectGitHubIssue} />
       </div>
 
-      <div style={{ borderTop: "1px solid #222", paddingTop: "8px", display: "flex", flexDirection: "column", gap: "4px" }}>
-        <span style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", color: "#666" }}>
-          Agent Harness Status
-        </span>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px", fontSize: "10px", color: "#888" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}><Bot size={10} color="#60a5fa" /> Claude</div>
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}><Bot size={10} color="#10b981" /> Codex</div>
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}><Bot size={10} color="#f59e0b" /> omp</div>
-          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}><Bot size={10} color="#a855f7" /> pi / OpenCode</div>
-        </div>
+      <div style={{ borderTop: "1px solid #222", paddingTop: "8px", fontSize: "11px", color: "#888" }}>
+        Harness status unavailable.
       </div>
     </aside>
   );

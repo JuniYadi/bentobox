@@ -1,16 +1,22 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   ChevronRight,
   Cpu,
   Layers,
   FileCheck,
   Activity,
-  AlertCircle,
 } from "lucide-react";
 import { SubAgentTask } from "../../features/session/types";
+import { listDetectedHarnesses } from "../../features/agent/api";
+import { AccountQuota, getAccountQuota, getSessionUsage, QuotaValue, SessionUsage } from "../../features/usage/api";
+
+function quotaText(value: QuotaValue): string {
+  return value.status === "available" ? String(value.value) : `${value.status === "unknown" ? "Unknown" : "Unavailable"}: ${value.reason}`;
+}
 
 /** @adr ADR-0009.D1 */
 export interface SidebarRightProps {
+  sessionId: number | null;
   subAgents: SubAgentTask[];
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -18,10 +24,54 @@ export interface SidebarRightProps {
 
 /** @adr ADR-0009.D1 */
 export const SidebarRight: React.FC<SidebarRightProps> = ({
+  sessionId,
   subAgents,
   collapsed,
   onToggleCollapse,
 }) => {
+  const [usage, setUsage] = useState<SessionUsage | null>(null);
+  const [usageUnavailable, setUsageUnavailable] = useState(false);
+  const [quotas, setQuotas] = useState<AccountQuota[] | null>(null);
+  const [quotaError, setQuotaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setUsage(null);
+    setUsageUnavailable(false);
+    if (sessionId != null) {
+      (async () => {
+        try {
+          const result = await getSessionUsage(sessionId);
+          if (!cancelled) setUsage(result);
+        } catch {
+          if (!cancelled) setUsageUnavailable(true);
+        }
+      })();
+    }
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const harnesses = await listDetectedHarnesses();
+        const results = await Promise.all(harnesses.map(async ({ capabilities }) => {
+          try {
+            return await getAccountQuota(capabilities.harness_id);
+          } catch {
+            const unavailable = { status: "unavailable" as const, reason: "Could not load account quota" };
+            return { harness_id: capabilities.harness_id, limit: unavailable, remaining: unavailable };
+          }
+        }));
+        if (!cancelled) setQuotas(results);
+      } catch {
+        if (!cancelled) setQuotaError("Could not load detected harnesses");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   if (collapsed) {
     return (
       <div
@@ -131,10 +181,7 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
             lineHeight: "1.4",
           }}
         >
-          <div style={{ color: "#888", marginBottom: "4px" }}>Active Envelope Schema:</div>
-          <div>• Goal & Acceptance Tests</div>
-          <div>• Pointed File Ranges</div>
-          <div>• Sanitized Credentials</div>
+          <div>No handoff available.</div>
         </div>
       </div>
 
@@ -153,32 +200,16 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
           <Activity size={12} />
           <span>Usage & Telemetry (ADR-0002)</span>
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px" }}>
-          <span style={{ color: "#888" }}>Session Context:</span>
-          <span style={{ color: "#ddd", fontWeight: 600 }}>1,840 tokens</span>
+        <div style={{ fontSize: "11px", color: "#ddd" }}>
+          <span style={{ color: "#888" }}>Session usage: </span>
+          {sessionId == null ? "Unavailable: No session selected" : usageUnavailable ? "Unavailable" : usage?.session_id !== sessionId ? "Loading…" : usage.reported_events === 0 ? "No usage recorded" : `${usage.total.input_tokens.toLocaleString()} input / ${usage.total.output_tokens.toLocaleString()} output tokens`}
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", alignItems: "center" }}>
-          <span style={{ color: "#888" }}>Account Quota:</span>
-          <span
-            style={{
-              color: "#fbbf24",
-              background: "#2e2105",
-              padding: "2px 6px",
-              borderRadius: "3px",
-              fontSize: "10px",
-              fontWeight: 700,
-              display: "flex",
-              alignItems: "center",
-              gap: "4px",
-            }}
-          >
-            <AlertCircle size={10} />
-            Unavailable
-          </span>
+        {usage?.session_id === sessionId && usage.skipped_events > 0 && <div role="status" style={{ fontSize: "11px", color: "#a1a1aa" }}>Warning: {usage.skipped_events} malformed usage {usage.skipped_events === 1 ? "report was" : "reports were"} skipped.</div>}
+        <div style={{ fontSize: "11px", color: "#ddd" }}>
+          <span style={{ color: "#888" }}>Account quota: </span>
+          {quotaError ? `Unavailable: ${quotaError}` : quotas == null ? "Loading…" : quotas.length === 0 ? "Unavailable: No detected harnesses" : quotas.map((quota) => <div key={quota.harness_id}>{quota.harness_id}: limit {quotaText(quota.limit)}; remaining {quotaText(quota.remaining)}</div>)}
         </div>
-        <span style={{ fontSize: "9px", color: "#555" }}>
-          Context occupancy is separate from subscription quota. No unverified estimates.
-        </span>
+        <span style={{ fontSize: "9px", color: "#888" }}>Session usage is separate from subscription quota.</span>
       </div>
     </aside>
   );
