@@ -10,7 +10,7 @@ decisions:
   D2:
     title: Developers share one CARGO_TARGET_DIR across git worktrees
     state: accepted
-    paths: []
+    paths: ["README.md"]
     protected: false
     use_cases: []
 ---
