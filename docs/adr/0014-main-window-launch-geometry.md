@@ -3,7 +3,7 @@ adr: ADR-0014
 decisions:
   D1:
     title: Main window opens maximized and centered, 1280x800 restore size, 1024x640 minimum
-    state: proposed
+    state: accepted
     paths: ["src-tauri/tauri.conf.json"]
     protected: false
     use_cases: []

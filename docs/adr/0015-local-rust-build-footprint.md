@@ -3,13 +3,13 @@ adr: ADR-0015
 decisions:
   D1:
     title: Dev profile keeps line tables for our crate and drops debug info for dependencies
-    state: proposed
+    state: accepted
     paths: ["src-tauri/Cargo.toml"]
     protected: false
     use_cases: []
   D2:
     title: Developers share one CARGO_TARGET_DIR across git worktrees
-    state: proposed
+    state: accepted
     paths: []
     protected: false
     use_cases: []
