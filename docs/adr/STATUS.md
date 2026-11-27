@@ -27,3 +27,8 @@ Generated file; change the ADRs or the code, then run the `status` command. Code
 | ADR-0014.D1 | Main window opens maximized and centered, 1280x800 restore size, 1024x640 minimum | accepted, no code yet | - | - | - |
 | ADR-0015.D1 | Dev profile keeps line tables for our crate and drops debug info for dependencies | accepted, no code yet | - | - | - |
 | ADR-0015.D2 | Developers share one CARGO_TARGET_DIR across git worktrees | accepted, no code yet | - | - | - |
+| ADR-0016.D1 | Frontend is built with Tailwind and shadcn/ui from DESIGN.md tokens; approved frames are committed as the visual reference | proposed | - | - | - |
+| ADR-0016.D2 | App shell follows project-tree-shadcn (projects tree, chat, contextual right panel, status bar) (supersedes ADR-0009.D1) | proposed | - | - | - |
+| ADR-0016.D3 | Plan approval renders in the chat as a plan card per project-tree-plan-approve | proposed | - | - | - |
+| ADR-0016.D4 | Each sub-agent has a detail view per agent-detail, built from the event log | proposed | - | - | - |
+| ADR-0016.D5 | Settings is a full-width view per settings-teams; only sections backed by real data ship, persisted in SQLite | proposed | - | - | - |

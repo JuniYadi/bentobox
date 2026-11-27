@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BentoBox — Project Tree (shadcn)</title>
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--color-bg); color: var(--color-fg); font-family: var(--font-sans); font-size: 14px; line-height: 1.5; height: 100vh; display: flex; flex-direction: column; overflow: hidden; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .muted { color: var(--color-fg-muted); }
+  .add { color: var(--color-success); } .del { color: var(--color-danger); }
+  .app { flex: 1; display: flex; min-height: 0; }
+
+  /* shadcn Button */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500; transition: background var(--motion-fast); white-space: nowrap; }
+  .btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
+  .btn-icon { width: 28px; height: 28px; padding: 0; }
+  .btn-default { background: var(--color-accent); color: var(--color-accent-fg); }
+  .btn-default:hover { background: #e4e4e7; }
+  .btn-outline { border: 1px solid var(--color-border); }
+  .btn-outline:hover, .btn-ghost:hover { background: var(--color-surface-elevated); }
+  .btn-ghost { color: var(--color-fg-muted); }
+  .btn-ghost:hover { color: var(--color-fg); }
+  .badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: 12px; }
+  .kbd { font-family: var(--font-mono); font-size: 10px; color: var(--color-fg-muted); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0 4px; line-height: 16px; }
+
+  /* ===== Sidebar ===== */
+  .sidebar { width: var(--sb-w, 256px); flex: none; background: var(--color-surface); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; transition: width var(--motion-fast); }
+  .sb-header { padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 10px; }
+  .brand { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px; }
+  .logo { width: 24px; height: 24px; border-radius: var(--radius-md); background: var(--color-accent); color: var(--color-accent-fg); display: grid; place-items: center; }
+  .logo svg { width: 14px; height: 14px; stroke-width: 2; }
+  .brand-name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+  .brand-ver { margin-left: auto; font-size: 11px; }
+  .search { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg-muted); font-size: 13px; }
+  .search .kbd { margin-left: auto; }
+
+  .sb-content { flex: 1; overflow-y: auto; padding: 4px 8px 8px; }
+  .group-label { display: flex; align-items: center; height: 32px; padding: 0 8px; font-size: 12px; font-weight: 500; color: var(--color-fg-muted); }
+  .group-label .btn { margin-left: auto; width: 20px; height: 20px; }
+  .group-label svg { width: 14px; height: 14px; }
+
+  .proj-btn { width: 100%; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500; text-align: left; }
+  .proj-btn:hover { background: var(--color-surface-elevated); }
+  .chev { color: var(--color-fg-muted); transition: transform var(--motion-fast); width: 14px; height: 14px; }
+  .proj.open > .proj-btn .chev { transform: rotate(90deg); }
+  .avatar { position: relative; width: 20px; height: 20px; border-radius: var(--radius-sm); background: var(--color-surface-elevated); display: grid; place-items: center; font-size: 11px; font-weight: 600; flex: none; }
+  .avatar .ping { position: absolute; top: -2px; right: -2px; width: 7px; height: 7px; border-radius: 50%; background: var(--color-warning); border: 1.5px solid var(--color-surface); display: none; }
+  .proj-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj-meta { font-size: 11px; color: var(--color-fg-muted); display: flex; align-items: center; gap: 6px; }
+  .proj.open > .proj-btn .proj-meta .summary { display: none; }
+
+  .sub { display: none; margin: 2px 0 6px 17px; padding-left: 8px; border-left: 1px solid var(--color-border); }
+  .proj.open > .sub { display: block; }
+  .sub-label { font-size: 11px; color: var(--color-fg-muted); padding: 6px 8px 2px; }
+  .item { width: 100%; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--radius-md); font-size: 13px; color: var(--color-fg-muted); text-align: left; }
+  .item:hover { background: var(--color-surface-elevated); color: var(--color-fg); }
+  .item.active { background: var(--color-surface-elevated); color: var(--color-fg); font-weight: 500; }
+  .item .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .meta { font-size: 11px; color: var(--color-fg-muted); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 400; }
+  .item .meta.warn { color: var(--color-warning); font-family: var(--font-sans); }
+  .item .meta.err { color: var(--color-danger); font-family: var(--font-sans); }
+  .item.new { color: var(--color-fg-muted); }
+
+  /* status glyphs */
+  .st { width: 14px; height: 14px; display: grid; place-items: center; flex: none; }
+  .st i { display: block; width: 7px; height: 7px; border-radius: 50%; }
+  .st .need { background: var(--color-warning); }
+  .st .fail { background: var(--color-danger); }
+  .st .idle { border: 1.5px solid var(--color-fg-muted); width: 8px; height: 8px; }
+  .st svg { width: 14px; height: 14px; }
+  .st .ok { color: var(--color-success); stroke-width: 2; }
+  .spin { animation: spin 1s linear infinite; color: var(--color-fg-muted); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .sb-footer { padding: 8px; border-top: 1px solid var(--color-border); display: flex; flex-direction: column; gap: 2px; }
+  .foot-item { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--radius-md); font-size: 13px; color: var(--color-fg-muted); width: 100%; text-align: left; }
+  .foot-item:hover { background: var(--color-surface-elevated); color: var(--color-fg); }
+  .foot-item .kbd { margin-left: auto; }
+  /* Teams (sidebar footer) */
+  .teams { padding: 0 0 6px; margin-bottom: 4px; border-bottom: 1px solid var(--color-border); }
+  .teams .group-label { height: 28px; }
+  .team { width: 100%; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--radius-md); font-size: 12px; color: var(--color-fg-muted); text-align: left; }
+  .team:hover { background: var(--color-surface-elevated); color: var(--color-fg); }
+  .team .tname { color: var(--color-fg); font-weight: 500; }
+  .team .role { font-size: 10px; color: var(--color-fg-muted); }
+  .chain { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+  .chain .hx { width: 18px; height: 16px; font-size: 9px; }
+  .chain .hx.skip { opacity: .35; text-decoration: line-through; }
+  .chain .hx.live { box-shadow: 0 0 0 1px var(--color-success); }
+  .chain .ar { color: var(--color-fg-muted); font-size: 9px; }
+  body.collapsed .teams { display: none; }
+
+  /* collapsed (icon) sidebar */
+  body.collapsed .sidebar { width: 52px; }
+  body.collapsed .brand-name, body.collapsed .brand-ver, body.collapsed .search, body.collapsed .group-label,
+  body.collapsed .proj-name, body.collapsed .proj-meta, body.collapsed .chev, body.collapsed .sub,
+  body.collapsed .foot-item span, body.collapsed .foot-item .kbd { display: none !important; }
+  body.collapsed .proj-btn, body.collapsed .foot-item, body.collapsed .brand { justify-content: center; padding: 0; }
+  body.collapsed .avatar .ping.on { display: block; }
+  body.collapsed .avatar { width: 28px; height: 28px; font-size: 12px; }
+  body.collapsed .collapse-icon { transform: scaleX(-1); }
+
+  /* ===== Main ===== */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar { height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--color-border); }
+  .crumb { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  .crumb svg { width: 14px; height: 14px; color: var(--color-fg-muted); }
+  .topbar .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+  .chat { flex: 1; overflow-y: auto; }
+  .chat-inner { max-width: 720px; margin: 0 auto; padding: 32px 24px; display: flex; flex-direction: column; gap: 20px; }
+  .user { align-self: flex-end; max-width: 80%; background: var(--color-surface-elevated); padding: 8px 12px; border-radius: var(--radius-lg); font-size: 14px; }
+  .assistant { font-size: 14px; color: var(--color-fg); }
+  .card { border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+  .card-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 13px; }
+  .card-row + .card-row { border-top: 1px solid var(--color-border); }
+  .card-row .grow { flex: 1; min-width: 0; }
+  .card-detail { padding: 0 12px 10px 34px; font-size: 12px; color: var(--color-fg-muted); display: grid; gap: 2px; margin-top: -4px; }
+
+  .composer-wrap { max-width: 720px; width: 100%; margin: 0 auto; padding: 0 24px 20px; }
+  .composer { border: 1px solid var(--color-input); border-radius: var(--radius-lg); background: var(--color-bg); }
+  .composer:focus-within { box-shadow: 0 0 0 1px var(--color-ring); }
+  .composer textarea { display: block; width: 100%; min-height: 64px; resize: none; border: 0; outline: 0; background: none; color: var(--color-fg); font: inherit; padding: 12px; }
+  .composer textarea::placeholder { color: var(--color-fg-muted); }
+  .toolbar { display: flex; align-items: center; gap: 12px; padding: 8px; }
+  /* harness/model picker (default from Settings, per-session override) */
+  .picker { position: relative; }
+  .picker-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: 12px; }
+  .picker-btn:hover { background: var(--color-surface-elevated); }
+  .picker-btn svg { width: 12px; height: 12px; color: var(--color-fg-muted); }
+  .hx { width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--color-surface-elevated); display: grid; place-items: center; font-size: 9px; font-weight: 700; flex: none; }
+  .menu { display: none; position: absolute; bottom: 34px; left: 0; width: 280px; padding: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 10; }
+  .picker.open .menu { display: block; }
+  .menu-label { font-size: 11px; color: var(--color-fg-muted); padding: 6px 8px 4px; }
+  .menu-item { width: 100%; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: var(--radius-sm); font-size: 12px; text-align: left; }
+  .menu-item:hover { background: var(--color-surface-elevated); }
+  .menu-item .m { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-muted); }
+  .menu-item .tag { font-size: 10px; color: var(--color-fg-muted); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0 4px; }
+  .menu-item.off { color: var(--color-fg-muted); }
+  .menu-sep { height: 1px; background: var(--color-border); margin: 4px 0; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-fg-muted); }
+  .switch .track { width: 32px; height: 18px; border-radius: 9999px; background: var(--color-accent); position: relative; }
+  .switch .track::after { content: ""; position: absolute; top: 2px; right: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--color-accent-fg); }
+  .toolbar .send { margin-left: auto; width: 32px; padding: 0; }
+
+  /* ===== Right panel ===== */
+  .panel { width: var(--panel-w, 360px); flex: none; border-left: 1px solid var(--color-border); display: flex; flex-direction: column; min-width: 0; }
+  .ptabs { height: 48px; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--color-border); overflow-x: auto; scrollbar-width: none; }
+  .ptab { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: var(--radius-md); font-size: 12px; color: var(--color-fg-muted); }
+  .ptab.on { background: var(--color-surface-elevated); color: var(--color-fg); }
+  .ptab svg { width: 12px; height: 12px; }
+  .ptab .x { opacity: .5; } .ptab .x:hover { opacity: 1; }
+  /* GitHub state colors (primer dark) */
+  .gh-open   { --gh: #3fb950; --gh-bg: #238636; }
+  .gh-draft  { --gh: #8b949e; --gh-bg: #6e7681; }
+  .gh-merged { --gh: #a371f7; --gh-bg: #8957e5; }
+  .gh-closed { --gh: #f85149; --gh-bg: #da3633; }
+  .gh-conflict { --gh: #d29922; --gh-bg: #9e6a03; }
+  /* Compact GitHub tabs: ID stays fg for contrast; status carried by icon + tint */
+  .ptab[data-gh] { cursor: pointer; flex: none; height: 24px; padding: 0 6px; gap: 4px; font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; color: var(--color-fg); background: color-mix(in srgb, var(--gh) 12%, transparent); border: 1px solid transparent; }
+  .ptab[data-gh] .ic { color: var(--gh); }
+  .ptab[data-gh]:hover { background: color-mix(in srgb, var(--gh) 20%, transparent); }
+  .ptab[data-gh].on { background: color-mix(in srgb, var(--gh) 22%, transparent); border-color: color-mix(in srgb, var(--gh) 65%, transparent); }
+  .ptab[data-gh] .x { display: none; } .ptab[data-gh]:hover .x, .ptab[data-gh].on .x { display: block; }
+  /* Resizable columns + collapsible right panel */
+  .rz { flex: none; width: 5px; margin: 0 -2px; position: relative; z-index: 5; cursor: col-resize; }
+  .rz::after { content: ""; position: absolute; inset: 0 2px; transition: background var(--motion-fast); }
+  .rz:hover::after, .rz.drag::after { background: var(--color-ring); }
+  body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; transition: none !important; }
+  body.collapsed .rz[data-rz="sb"] { display: none; }
+  body.panel-collapsed .panel, body.panel-collapsed .rz[data-rz="panel"] { display: none; }
+  #toggle-panel.on { color: var(--color-fg); background: var(--color-surface-elevated); }
+  /* @harness/model:effort routing */
+  .composer { position: relative; }
+  .mention { display: none; position: absolute; left: 8px; bottom: calc(100% + 6px); width: 360px; padding: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 10; }
+  .mention.open { display: block; }
+  .mention .menu-item.sel { background: var(--color-surface-elevated); }
+  .route { display: none; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: var(--radius-md); font-size: 12px; background: color-mix(in srgb, var(--color-success) 12%, transparent); border: 1px solid color-mix(in srgb, var(--color-success) 40%, transparent); }
+  .route.on { display: inline-flex; }
+  .picker.overridden .picker-btn { opacity: .45; text-decoration: line-through; }
+  .hint { padding: 0 12px 2px; font-size: 11px; color: var(--color-fg-muted); }
+  .hint .mono { color: var(--color-fg); }
+  .state { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 10px; border-radius: var(--radius-pill); background: var(--gh-bg); color: #fff; font-size: 12px; font-weight: 500; }
+  .state svg { width: 14px; height: 14px; }
+  .mergebox { margin-top: 16px; border: 1px solid var(--gh-bg); border-radius: var(--radius-lg); padding: 10px 12px; font-size: 12px; display: flex; gap: 8px; align-items: flex-start; }
+  .mergebox svg { color: var(--gh); margin-top: 2px; }
+  .ptabs .right { margin-left: auto; display: flex; gap: 2px; }
+  .doc { flex: 1; overflow-y: auto; padding: 16px; }
+  .doc .ref { font-size: 12px; margin-bottom: 4px; }
+  .doc h1 { font-size: 16px; font-weight: 600; line-height: 1.4; margin-bottom: 8px; }
+  .doc .by { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 16px; }
+  .doc h2 { font-size: 13px; font-weight: 600; margin: 16px 0 4px; }
+  .doc p, .doc li { font-size: 13px; color: #d4d4d8; }
+  .doc ul { padding-left: 18px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); }
+
+  .statusbar { height: 28px; display: flex; align-items: center; gap: 16px; padding: 0 12px; border-top: 1px solid var(--color-border); font-size: 11px; color: var(--color-fg-muted); }
+  .statusbar .h { display: inline-flex; align-items: center; gap: 6px; }
+  .statusbar .sp { flex: 1; }
+  .statusbar .dot.w { background: var(--color-warning); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ================= Sidebar ================= -->
+  <aside class="sidebar">
+    <div class="sb-header">
+      <div class="brand">
+        <div class="logo"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18M12 3v18"/></svg></div>
+        <span class="brand-name">bentobox</span>
+        <span class="brand-ver mono muted">0.1</span>
+      </div>
+      <div class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        Search sessions
+        <span class="kbd">⌘K</span>
+      </div>
+    </div>
+
+    <div class="sb-content">
+      <div class="group-label">Projects
+        <button class="btn btn-ghost" title="Add project"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+
+      <!-- Project: bentobox (open) — covers every session state -->
+      <div class="proj open">
+        <button class="proj-btn" data-toggle>
+          <svg class="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+          <span class="avatar">B<span class="ping on"></span></span>
+          <span class="proj-name">bentobox</span>
+          <span class="proj-meta"><span class="summary">1 needs you</span><span class="mono">main</span></span>
+        </button>
+        <div class="sub">
+          <button class="item active" title="omp is asking to write src-tauri/src/github/mod.rs">
+            <span class="st"><i class="need"></i></span>
+            <span class="title">ACP multi-harness sync</span>
+            <span class="meta warn">Approve</span>
+          </button>
+          <button class="item" title="codex running in task/wt-gc">
+            <span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span>
+            <span class="title">Worktree cleanup rules</span>
+            <span class="meta">1:12</span>
+          </button>
+          <button class="item" title="Plan mode, read-only">
+            <span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span>
+            <span class="title">SQLite event store</span>
+            <span class="meta">plan</span>
+          </button>
+          <button class="item" title="task/gh-labels ready to merge">
+            <span class="st"><svg class="ok" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="title">GitHub label sync</span>
+            <span class="meta"><span class="add">+21</span> <span class="del">−9</span></span>
+          </button>
+          <button class="item" title="cargo check failed">
+            <span class="st"><i class="fail"></i></span>
+            <span class="title">Fix CI flake</span>
+            <span class="meta err">Failed</span>
+          </button>
+          <button class="item">
+            <span class="st"><i class="idle"></i></span>
+            <span class="title">Tauri updater spike</span>
+            <span class="meta">2d</span>
+          </button>
+          <button class="item new">
+            <span class="st"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M12 5v14M5 12h14"/></svg></span>
+            <span class="title">New session</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Project: claude-agent-runner (open, quieter) -->
+      <div class="proj open">
+        <button class="proj-btn" data-toggle>
+          <svg class="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+          <span class="avatar">C</span>
+          <span class="proj-name">claude-agent-runner</span>
+          <span class="proj-meta"><span class="summary">1 running</span><span class="mono">dev</span></span>
+        </button>
+        <div class="sub">
+          <button class="item">
+            <span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span>
+            <span class="title">SDK usage probe</span>
+            <span class="meta">0:08</span>
+          </button>
+          <button class="item">
+            <span class="st"><svg class="ok" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="title">Fix stdio framing</span>
+            <span class="meta">merged</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Project: collapsed, summary still visible -->
+      <div class="proj">
+        <button class="proj-btn" data-toggle>
+          <svg class="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+          <span class="avatar">O</span>
+          <span class="proj-name">oh-my-pi</span>
+          <span class="proj-meta"><span class="summary">2 running</span></span>
+        </button>
+        <div class="sub">
+          <button class="item"><span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span><span class="title">Plugin loader</span><span class="meta">4:30</span></button>
+          <button class="item"><span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span><span class="title">ACP permission map</span><span class="meta">0:51</span></button>
+        </div>
+      </div>
+
+      <!-- Project: collapsed, nothing happening -->
+      <div class="proj">
+        <button class="proj-btn" data-toggle>
+          <svg class="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+          <span class="avatar">D</span>
+          <span class="proj-name">dotfiles</span>
+          <span class="proj-meta"><span class="summary">idle</span></span>
+        </button>
+        <div class="sub"><button class="item new"><span class="st"></span><span class="title">No sessions</span></button></div>
+      </div>
+    </div>
+
+    <div class="sb-footer">
+      <div class="teams">
+        <div class="group-label">Teams
+          <button class="btn btn-ghost btn-icon" data-goto="settings-teams" title="Manage teams"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+        </div>
+        <button class="team" data-goto="settings-teams" title="Planning + review. Claude opus → Codex gpt-6.1">
+          <span class="tname">frontier</span><span class="role">orchestrator</span>
+          <span class="chain"><span class="hx live">Cl</span><span class="ar">›</span><span class="hx">Cx</span></span>
+        </button>
+        <button class="team" data-goto="settings-teams" title="Sub-agents. omp haiku skipped (rate limited), Codex mini live, pi offline">
+          <span class="tname">cheaper</span><span class="role">sub-agents</span>
+          <span class="chain"><span class="hx skip">om</span><span class="ar">›</span><span class="hx live">Cx</span><span class="ar">›</span><span class="hx">pi</span></span>
+        </button>
+        <button class="team" data-goto="settings-teams" title="Diff review. Claude sonnet → omp">
+          <span class="tname">review</span><span class="role">review</span>
+          <span class="chain"><span class="hx live">Cl</span><span class="ar">›</span><span class="hx">om</span></span>
+        </button>
+      </div>
+      <button class="foot-item" data-goto="settings-teams">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        <span>Settings</span>
+        <span class="kbd">⌘,</span>
+      </button>
+      <button class="foot-item" id="collapse">
+        <svg class="collapse-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M16 10l-2 2 2 2"/></svg>
+        <span>Collapse sidebar</span>
+        <span class="kbd">⌘B</span>
+      </button>
+    </div>
+  </aside>
+  <div class="rz" data-rz="sb" title="Drag to resize · double-click to reset"></div>
+
+  <!-- ================= Main ================= -->
+  <main class="main">
+    <div class="topbar">
+      <div class="crumb">
+        <span class="muted">bentobox</span>
+        <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+        <span>ACP multi-harness sync</span>
+      </div>
+      <div class="right">
+        <span class="badge mono"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6 8v8a4 4 0 0 0 4 4h6"/></svg>task/gh-bridge</span>
+        <span class="mono" style="font-size:12px"><span class="add">+88</span> <span class="del">−1</span></span>
+        <button class="btn btn-ghost btn-icon on" id="toggle-panel" title="Toggle right panel (⌥⌘B)" aria-pressed="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg></button>
+      </div>
+    </div>
+
+    <div class="chat"><div class="chat-inner">
+      <div class="user">Add a GitHub CLI bridge. Hand it off to a cheaper agent in its own worktree.</div>
+      <div class="assistant">One task. Handing it to <strong>omp</strong> in <span class="mono">task/gh-bridge</span>.</div>
+
+      <div class="card">
+        <div class="card-row">
+          <span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span>
+          <span class="grow"><strong style="font-weight:500">omp</strong> <span class="muted">Scaffold gh bridge</span></span>
+          <span class="mono muted" style="font-size:12px">0:42</span>
+          <button class="btn btn-ghost btn-sm" data-goto="agent-detail">Open agent</button>
+        </div>
+        <div class="card-detail mono">
+          <span>src-tauri/src/github/mod.rs · src-tauri/src/lib.rs</span>
+          <span>check: cargo check</span>
+        </div>
+        <div class="card-row">
+          <span class="st"><i class="need" style="display:block;width:7px;height:7px;border-radius:50%;background:var(--color-warning)"></i></span>
+          <span class="grow">Write <span class="mono">github/mod.rs</span> <span class="mono add">+84</span></span>
+          <button class="btn btn-ghost btn-sm">View diff</button>
+          <button class="btn btn-outline btn-sm">Deny</button>
+          <button class="btn btn-default btn-sm">Allow</button>
+        </div>
+      </div>
+    </div></div>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <div class="mention" id="mention" role="listbox" aria-label="Route to harness"></div>
+        <textarea id="prompt" placeholder="Describe the goal… type @ to route to a harness">Add PR status tabs to the inspector. @codex/gpt-6.1:high</textarea>
+        <div class="hint">Route a task: <span class="mono">@harness/model:effort</span> or <span class="mono">@team:name</span></div>
+        <div class="toolbar">
+          <span class="route" id="route" title="Inline route overrides the session team for this message"><span class="hx" id="route-hx">Cx</span><span class="mono" id="route-text"></span></span>
+          <div class="picker" id="picker">
+            <button class="picker-btn" data-picker title="Harness and model for this session (default from Settings)">
+              <span class="hx">Cl</span><span>frontier</span><span class="mono muted">opus-5.5</span>
+              <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="menu">
+              <div class="menu-label">Team · this session</div>
+              <button class="menu-item"><span class="hx">Cl</span>frontier<span class="tag">default</span><span class="m">opus → gpt-6.1</span></button>
+              <button class="menu-item"><span class="hx">Cx</span>cheaper<span class="m">mini → pi</span></button>
+              <div class="menu-sep"></div>
+              <div class="menu-label">Single harness</div>
+              <button class="menu-item"><span class="hx">om</span>omp<span class="m">sonnet-5.5</span></button>
+              <button class="menu-item"><span class="hx">Cl</span>Claude Code<span class="m">opus-5.5</span></button>
+              <button class="menu-item"><span class="hx">Cx</span>Codex<span class="m">gpt-6.1</span></button>
+              <button class="menu-item off"><span class="hx">pi</span>pi (CLI)<span class="m">offline</span></button>
+              <div class="menu-sep"></div>
+              <button class="menu-item"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg>Set as project default</button>
+              <button class="menu-item" data-goto="settings-teams"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>Manage teams…</button>
+            </div>
+          </div>
+          <label class="switch"><span class="track"></span>Worktree</label>
+          <button class="btn btn-default send" title="Send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ================= Right panel ================= -->
+  <div class="rz" data-rz="panel" title="Drag to resize · double-click to reset"></div>
+  <aside class="panel">
+    <div class="ptabs">
+      <span class="ptab gh-open on" data-gh="i1234"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>#1234 <svg class="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+      <span class="ptab gh-draft" data-gh="p1240"><svg class="ic" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6 8v8M18 8v1M18 12v1M18 15v1"/></svg>#1240 <svg class="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+      <span class="ptab gh-conflict" data-gh="p1251"><svg class="ic" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6 8v8M18 16V9a3 3 0 0 0-3-3h-3m0 0 2-2m-2 2 2 2"/></svg>#1251 <svg class="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+      <span class="ptab gh-merged" data-gh="p1198"><svg class="ic" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 8v8M6 8a6 6 0 0 0 6 4h4"/></svg>#1198 <svg class="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+      <span class="ptab gh-open" data-gh="p1263"><svg class="ic" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6 8v8M18 16V9a3 3 0 0 0-3-3h-3m0 0 2-2m-2 2 2 2"/></svg>#1263 <svg class="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+      <span class="ptab gh-closed" data-gh="i1177"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg>#1177 <svg class="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+      <button class="btn btn-ghost btn-icon" title="Open issue or PR"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div class="right">
+        <button class="btn btn-ghost btn-icon" title="Open in browser"><svg viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></button>
+      </div>
+    </div>
+    <article class="doc" id="gh-doc"></article>
+  </aside>
+</div>
+
+<footer class="statusbar">
+  <span class="h"><span class="dot"></span>Claude</span>
+  <span class="h"><span class="dot"></span>Codex</span>
+  <span class="h"><span class="dot"></span>omp</span>
+  <span class="h"><span class="dot w"></span>pi (CLI)</span>
+  <span class="sp"></span>
+  <span class="mono">1,840 / 200k ctx</span>
+  <span>quota Unavailable</span>
+  <span>gh @JuniYadi</span>
+</footer>
+
+<script>
+  document.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', () => b.parentElement.classList.toggle('open')));
+  const picker = document.getElementById('picker');
+  picker.querySelector('[data-picker]').addEventListener('click', e => { e.stopPropagation(); picker.classList.toggle('open'); });
+  document.addEventListener('click', () => picker.classList.remove('open'));
+
+  const ICON = {
+    open: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>',
+    pr: '<svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M6 8v8M18 16V9a3 3 0 0 0-3-3h-3m0 0 2-2m-2 2 2 2"/></svg>',
+    merged: '<svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 8v8M6 8a6 6 0 0 0 6 4h4"/></svg>',
+    alert: '<svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
+    check: '<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
+  };
+  const GH = {
+    i1234: { cls: 'gh-open', ref: 'issue #1234', state: [ICON.open, 'Open'], title: 'Support ACP server bridge over stdio', by: 'JuniYadi opened 2h ago · 3 comments',
+      body: '<h2>Summary</h2><p>Spawn ACP-capable agents as child processes and talk JSON-RPC over stdio.</p><h2>Acceptance</h2><ul><li>Detect agent binary and version</li><li>Stream session events to the chat</li><li>Route permission requests to the user</li></ul>',
+      actions: '<button class="btn btn-outline btn-sm">Use as prompt</button>' },
+    p1240: { cls: 'gh-draft', ref: 'pull request #1240 · task/gh-bridge → main', state: [ICON.pr, 'Draft'], title: 'feat: GitHub CLI bridge', by: 'omp wants to merge 3 commits · <span class="add">+88</span> <span class="del">−1</span>',
+      body: '<h2>Checks</h2><p>cargo check · running</p>', box: [ICON.pr, 'This pull request is still a work in progress. Mark it ready when the sub-agent finishes.'],
+      actions: '<button class="btn btn-outline btn-sm">Ready for review</button>' },
+    p1251: { cls: 'gh-conflict', ref: 'pull request #1251 · task/session-store → main', state: [ICON.pr, 'Open'], title: 'feat: SQLite session store', by: 'codex wants to merge 5 commits · <span class="add">+412</span> <span class="del">−37</span>',
+      body: '<h2>Checks</h2><p>3 of 3 passed</p>', box: [ICON.alert, '<strong>This branch has conflicts</strong> in <span class="mono">src-tauri/src/lib.rs</span>. Resolve before merging.'],
+      actions: '<button class="btn btn-outline btn-sm">Resolve with agent</button>' },
+    p1198: { cls: 'gh-merged', ref: 'pull request #1198 · task/layout → main', state: [ICON.merged, 'Merged'], title: 'feat: three-column layout', by: 'JuniYadi merged 4 commits · yesterday',
+      body: '<h2>Summary</h2><p>Sidebar, chat, and inspector columns with resizable panes.</p>', box: [ICON.check, 'Merged into <span class="mono">main</span>. Worktree <span class="mono">task/layout</span> can be removed.'],
+      actions: '<button class="btn btn-outline btn-sm">Remove worktree</button>' },
+    p1263: { cls: 'gh-open', ref: 'pull request #1263 · task/teams → main', state: [ICON.pr, 'Open'], title: 'feat: team fallback chains', by: 'codex wants to merge 2 commits · <span class="add">+156</span> <span class="del">−12</span>',
+      body: '<h2>Checks</h2><p>2 of 2 passed · review requested</p>', actions: '<button class="btn btn-outline btn-sm">Review with agent</button>' },
+    i1177: { cls: 'gh-closed', ref: 'issue #1177', state: [ICON.open, 'Closed'], title: 'Single global model selector', by: 'JuniYadi closed as not planned · last week',
+      body: '<p>Superseded by teams with per-role fallback chains.</p>', actions: '<button class="btn btn-outline btn-sm">Reopen</button>' },
+  };
+  const doc = document.getElementById('gh-doc');
+  function showGh(id) {
+    const d = GH[id];
+    doc.className = 'doc ' + d.cls;
+    doc.innerHTML = `<div class="ref mono muted">JuniYadi/bentobox · ${d.ref}</div><h1>${d.title}</h1>
+      <div class="by"><span class="state">${d.state[0]}${d.state[1]}</span><span class="muted">${d.by}</span></div>${d.body}
+      ${d.box ? `<div class="mergebox">${d.box[0]}<span>${d.box[1]}</span></div>` : ''}
+      <div style="margin-top:16px">${d.actions}</div>`;
+    document.querySelectorAll('.ptab[data-gh]').forEach(t => t.classList.toggle('on', t.dataset.gh === id));
+  }
+  document.querySelectorAll('.ptab[data-gh]').forEach(t => t.addEventListener('click', () => showGh(t.dataset.gh)));
+  showGh('i1234');
+  const toggle = () => document.body.classList.toggle('collapsed');
+  document.getElementById('collapse').addEventListener('click', toggle);
+  const panelBtn = document.getElementById('toggle-panel');
+  const togglePanel = () => { const c = document.body.classList.toggle('panel-collapsed'); panelBtn.classList.toggle('on', !c); panelBtn.setAttribute('aria-pressed', String(!c)); };
+  panelBtn.addEventListener('click', togglePanel);
+  document.addEventListener('keydown', e => {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    if (e.altKey && e.code === 'KeyB') { e.preventDefault(); togglePanel(); }
+    else if (e.key === 'b') { e.preventDefault(); toggle(); }
+  });
+
+  // Column resizers
+  const LIMITS = { sb: ['--sb-w', 200, 420, 256, '.sidebar', 1], panel: ['--panel-w', 280, 640, 360, '.panel', -1] };
+  document.querySelectorAll('.rz').forEach(h => {
+    const [v, min, max, def, sel, dir] = LIMITS[h.dataset.rz];
+    h.addEventListener('dblclick', () => document.documentElement.style.setProperty(v, def + 'px'));
+    h.addEventListener('pointerdown', e => {
+      const x0 = e.clientX, w0 = document.querySelector(sel).getBoundingClientRect().width;
+      h.setPointerCapture(e.pointerId); h.classList.add('drag'); document.body.classList.add('resizing');
+      const move = ev => document.documentElement.style.setProperty(v, Math.min(max, Math.max(min, w0 + dir * (ev.clientX - x0))) + 'px');
+      h.addEventListener('pointermove', move);
+      h.addEventListener('pointerup', () => { h.removeEventListener('pointermove', move); h.classList.remove('drag'); document.body.classList.remove('resizing'); }, { once: true });
+    });
+  });
+
+  // @harness/model:effort routing
+  const HX = { codex: 'Cx', claude: 'Cl', omp: 'om', pi: 'pi', team: 'Tm' };
+  const ROUTES = [
+    ['codex/gpt-6.1:high', 'ChatGPT Plus'], ['codex/gpt-6.1:medium', 'ChatGPT Plus'], ['codex/gpt-6.1-mini:low', 'ChatGPT Plus · cheap'],
+    ['claude/opus-5.5:high', 'Max plan'], ['claude/sonnet-5.5:medium', 'Max plan'],
+    ['omp/haiku-5.5:low', 'rate limited until 14:20'], ['pi/local', 'offline'],
+    ['team:cheaper', 'omp → Codex → pi'], ['team:review', 'Claude → omp'],
+  ];
+  const ta = document.getElementById('prompt'), menu = document.getElementById('mention');
+  const routeEl = document.getElementById('route');
+  let matches = [], sel = 0;
+  const token = () => (ta.value.slice(0, ta.selectionStart).match(/@([\w.:/-]*)$/) || [])[1];
+  function renderMenu() {
+    const q = token();
+    if (q === undefined) { menu.classList.remove('open'); return; }
+    matches = ROUTES.filter(([r]) => r.includes(q.toLowerCase()));
+    if (!matches.length) { menu.classList.remove('open'); return; }
+    sel = Math.min(sel, matches.length - 1);
+    menu.innerHTML = '<div class="menu-label">Route to · harness/model:effort</div>' + matches.map(([r, note], i) =>
+      `<button class="menu-item${i === sel ? ' sel' : ''}${note === 'offline' ? ' off' : ''}" data-i="${i}"><span class="hx">${HX[r.split(/[/:]/)[0]]}</span><span class="mono">${r}</span><span class="m">${note}</span></button>`).join('');
+    menu.classList.add('open');
+  }
+  function pick(i) {
+    const pos = ta.selectionStart, before = ta.value.slice(0, pos).replace(/@[\w.:/-]*$/, '@' + matches[i][0] + ' ');
+    ta.value = before + ta.value.slice(pos); ta.focus(); ta.selectionStart = ta.selectionEnd = before.length;
+    menu.classList.remove('open'); syncRoute();
+  }
+  function syncRoute() {
+    const m = ta.value.match(/@(team:[\w-]+|[\w-]+\/[\w.-]+(?::(?:low|medium|high))?)/);
+    routeEl.classList.toggle('on', !!m); picker.classList.toggle('overridden', !!m);
+    if (m) { document.getElementById('route-text').textContent = m[1]; document.getElementById('route-hx').textContent = HX[m[1].split(/[/:]/)[0]] || '?'; }
+  }
+  ta.addEventListener('input', () => { sel = 0; renderMenu(); syncRoute(); });
+  ta.addEventListener('keydown', e => {
+    if (!menu.classList.contains('open')) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); sel = (sel + (e.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length; renderMenu(); }
+    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(sel); }
+    else if (e.key === 'Escape') menu.classList.remove('open');
+  });
+  menu.addEventListener('mousedown', e => { const b = e.target.closest('[data-i]'); if (b) { e.preventDefault(); pick(+b.dataset.i); } });
+  syncRoute();
+</script>
+</body>
+</html>

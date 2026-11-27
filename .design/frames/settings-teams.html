@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BentoBox — Settings · Teams</title>
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--color-bg); color: var(--color-fg); font-family: var(--font-sans); font-size: 14px; line-height: 1.5; height: 100vh; display: flex; flex-direction: column; overflow: hidden; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .muted { color: var(--color-fg-muted); }
+  .add { color: var(--color-success); } .del { color: var(--color-danger); }
+  .app { flex: 1; display: flex; min-height: 0; }
+
+  /* shadcn Button */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500; transition: background var(--motion-fast); white-space: nowrap; }
+  .btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
+  .btn-icon { width: 28px; height: 28px; padding: 0; }
+  .btn-default { background: var(--color-accent); color: var(--color-accent-fg); }
+  .btn-default:hover { background: #e4e4e7; }
+  .btn-outline { border: 1px solid var(--color-border); }
+  .btn-outline:hover, .btn-ghost:hover { background: var(--color-surface-elevated); }
+  .btn-ghost { color: var(--color-fg-muted); }
+  .btn-ghost:hover { color: var(--color-fg); }
+  .badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: 12px; }
+  .kbd { font-family: var(--font-mono); font-size: 10px; color: var(--color-fg-muted); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0 4px; line-height: 16px; }
+
+  /* ===== Sidebar ===== */
+  .sidebar { width: 256px; background: var(--color-surface); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; transition: width var(--motion-fast); }
+  .sb-header { padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 10px; }
+  .brand { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px; }
+  .logo { width: 24px; height: 24px; border-radius: var(--radius-md); background: var(--color-accent); color: var(--color-accent-fg); display: grid; place-items: center; }
+  .logo svg { width: 14px; height: 14px; stroke-width: 2; }
+  .brand-name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+  .brand-ver { margin-left: auto; font-size: 11px; }
+  .search { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg-muted); font-size: 13px; }
+  .search .kbd { margin-left: auto; }
+
+  .sb-content { flex: 1; overflow-y: auto; padding: 4px 8px 8px; }
+  .group-label { display: flex; align-items: center; height: 32px; padding: 0 8px; font-size: 12px; font-weight: 500; color: var(--color-fg-muted); }
+  .group-label .btn { margin-left: auto; width: 20px; height: 20px; }
+  .group-label svg { width: 14px; height: 14px; }
+
+  .proj-btn { width: 100%; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500; text-align: left; }
+  .proj-btn:hover { background: var(--color-surface-elevated); }
+  .chev { color: var(--color-fg-muted); transition: transform var(--motion-fast); width: 14px; height: 14px; }
+  .proj.open > .proj-btn .chev { transform: rotate(90deg); }
+  .avatar { position: relative; width: 20px; height: 20px; border-radius: var(--radius-sm); background: var(--color-surface-elevated); display: grid; place-items: center; font-size: 11px; font-weight: 600; flex: none; }
+  .avatar .ping { position: absolute; top: -2px; right: -2px; width: 7px; height: 7px; border-radius: 50%; background: var(--color-warning); border: 1.5px solid var(--color-surface); display: none; }
+  .proj-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj-meta { font-size: 11px; color: var(--color-fg-muted); display: flex; align-items: center; gap: 6px; }
+  .proj.open > .proj-btn .proj-meta .summary { display: none; }
+
+  .sub { display: none; margin: 2px 0 6px 17px; padding-left: 8px; border-left: 1px solid var(--color-border); }
+  .proj.open > .sub { display: block; }
+  .sub-label { font-size: 11px; color: var(--color-fg-muted); padding: 6px 8px 2px; }
+  .item { width: 100%; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--radius-md); font-size: 13px; color: var(--color-fg-muted); text-align: left; }
+  .item:hover { background: var(--color-surface-elevated); color: var(--color-fg); }
+  .item.active { background: var(--color-surface-elevated); color: var(--color-fg); font-weight: 500; }
+  .item .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .meta { font-size: 11px; color: var(--color-fg-muted); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 400; }
+  .item .meta.warn { color: var(--color-warning); font-family: var(--font-sans); }
+  .item .meta.err { color: var(--color-danger); font-family: var(--font-sans); }
+  .item.new { color: var(--color-fg-muted); }
+
+  /* status glyphs */
+  .st { width: 14px; height: 14px; display: grid; place-items: center; flex: none; }
+  .st i { display: block; width: 7px; height: 7px; border-radius: 50%; }
+  .st .need { background: var(--color-warning); }
+  .st .fail { background: var(--color-danger); }
+  .st .idle { border: 1.5px solid var(--color-fg-muted); width: 8px; height: 8px; }
+  .st svg { width: 14px; height: 14px; }
+  .st .ok { color: var(--color-success); stroke-width: 2; }
+  .spin { animation: spin 1s linear infinite; color: var(--color-fg-muted); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .sb-footer { padding: 8px; border-top: 1px solid var(--color-border); display: flex; flex-direction: column; gap: 2px; }
+  .foot-item { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--radius-md); font-size: 13px; color: var(--color-fg-muted); width: 100%; text-align: left; }
+  .foot-item:hover { background: var(--color-surface-elevated); color: var(--color-fg); }
+  .foot-item .kbd { margin-left: auto; }
+  /* Teams (sidebar footer) */
+  .teams { padding: 0 0 6px; margin-bottom: 4px; border-bottom: 1px solid var(--color-border); }
+  .teams .group-label { height: 28px; }
+  .team { width: 100%; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--radius-md); font-size: 12px; color: var(--color-fg-muted); text-align: left; }
+  .team:hover { background: var(--color-surface-elevated); color: var(--color-fg); }
+  .team .tname { color: var(--color-fg); font-weight: 500; }
+  .team .role { font-size: 10px; color: var(--color-fg-muted); }
+  .chain { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+  .chain .hx { width: 18px; height: 16px; font-size: 9px; }
+  .chain .hx.skip { opacity: .35; text-decoration: line-through; }
+  .chain .hx.live { box-shadow: 0 0 0 1px var(--color-success); }
+  .chain .ar { color: var(--color-fg-muted); font-size: 9px; }
+  body.collapsed .teams { display: none; }
+
+  /* collapsed (icon) sidebar */
+  body.collapsed .sidebar { width: 52px; }
+  body.collapsed .brand-name, body.collapsed .brand-ver, body.collapsed .search, body.collapsed .group-label,
+  body.collapsed .proj-name, body.collapsed .proj-meta, body.collapsed .chev, body.collapsed .sub,
+  body.collapsed .foot-item span, body.collapsed .foot-item .kbd { display: none !important; }
+  body.collapsed .proj-btn, body.collapsed .foot-item, body.collapsed .brand { justify-content: center; padding: 0; }
+  body.collapsed .avatar .ping.on { display: block; }
+  body.collapsed .avatar { width: 28px; height: 28px; font-size: 12px; }
+  body.collapsed .collapse-icon { transform: scaleX(-1); }
+
+  /* ===== Main ===== */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar { height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--color-border); }
+  .crumb { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  .crumb svg { width: 14px; height: 14px; color: var(--color-fg-muted); }
+  .topbar .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+  .chat { flex: 1; overflow-y: auto; }
+  .chat-inner { max-width: 720px; margin: 0 auto; padding: 32px 24px; display: flex; flex-direction: column; gap: 20px; }
+  .user { align-self: flex-end; max-width: 80%; background: var(--color-surface-elevated); padding: 8px 12px; border-radius: var(--radius-lg); font-size: 14px; }
+  .assistant { font-size: 14px; color: var(--color-fg); }
+  .card { border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+  .card-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 13px; }
+  .card-row + .card-row { border-top: 1px solid var(--color-border); }
+  .card-row .grow { flex: 1; min-width: 0; }
+  .card-detail { padding: 0 12px 10px 34px; font-size: 12px; color: var(--color-fg-muted); display: grid; gap: 2px; margin-top: -4px; }
+
+  .composer-wrap { max-width: 720px; width: 100%; margin: 0 auto; padding: 0 24px 20px; }
+  .composer { border: 1px solid var(--color-input); border-radius: var(--radius-lg); background: var(--color-bg); }
+  .composer:focus-within { box-shadow: 0 0 0 1px var(--color-ring); }
+  .composer textarea { display: block; width: 100%; min-height: 64px; resize: none; border: 0; outline: 0; background: none; color: var(--color-fg); font: inherit; padding: 12px; }
+  .composer textarea::placeholder { color: var(--color-fg-muted); }
+  .toolbar { display: flex; align-items: center; gap: 12px; padding: 8px; }
+  /* harness/model picker (default from Settings, per-session override) */
+  .picker { position: relative; }
+  .picker-btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: 12px; }
+  .picker-btn:hover { background: var(--color-surface-elevated); }
+  .picker-btn svg { width: 12px; height: 12px; color: var(--color-fg-muted); }
+  .hx { width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--color-surface-elevated); display: grid; place-items: center; font-size: 9px; font-weight: 700; flex: none; }
+  .menu { display: none; position: absolute; bottom: 34px; left: 0; width: 280px; padding: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 10; }
+  .picker.open .menu { display: block; }
+  .menu-label { font-size: 11px; color: var(--color-fg-muted); padding: 6px 8px 4px; }
+  .menu-item { width: 100%; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: var(--radius-sm); font-size: 12px; text-align: left; }
+  .menu-item:hover { background: var(--color-surface-elevated); }
+  .menu-item .m { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-muted); }
+  .menu-item .tag { font-size: 10px; color: var(--color-fg-muted); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0 4px; }
+  .menu-item.off { color: var(--color-fg-muted); }
+  .menu-sep { height: 1px; background: var(--color-border); margin: 4px 0; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-fg-muted); }
+  .switch .track { width: 32px; height: 18px; border-radius: 9999px; background: var(--color-accent); position: relative; }
+  .switch .track::after { content: ""; position: absolute; top: 2px; right: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--color-accent-fg); }
+  .toolbar .send { margin-left: auto; width: 32px; padding: 0; }
+
+  /* ===== Right panel ===== */
+  .panel { width: 360px; border-left: 1px solid var(--color-border); display: flex; flex-direction: column; }
+  .ptabs { height: 48px; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--color-border); }
+  .ptab { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: var(--radius-md); font-size: 12px; color: var(--color-fg-muted); }
+  .ptab.on { background: var(--color-surface-elevated); color: var(--color-fg); }
+  .ptab svg { width: 12px; height: 12px; }
+  .ptab .x { opacity: .5; } .ptab .x:hover { opacity: 1; }
+  /* GitHub state colors (primer dark) */
+  .gh-open   { --gh: #3fb950; --gh-bg: #238636; }
+  .gh-draft  { --gh: #8b949e; --gh-bg: #6e7681; }
+  .gh-merged { --gh: #a371f7; --gh-bg: #8957e5; }
+  .gh-closed { --gh: #f85149; --gh-bg: #da3633; }
+  .gh-conflict { --gh: #d29922; --gh-bg: #9e6a03; }
+  .ptab[data-gh] { cursor: pointer; border: 1px solid color-mix(in srgb, var(--gh-bg) 45%, transparent); background: color-mix(in srgb, var(--gh-bg) 16%, transparent); color: var(--gh); }
+  .ptab[data-gh]:hover { background: color-mix(in srgb, var(--gh-bg) 28%, transparent); }
+  .ptab[data-gh].on { background: var(--gh-bg); border-color: var(--gh-bg); color: #fff; }
+  .ptab[data-gh].on .ic { color: #fff; }
+  .state { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 10px; border-radius: var(--radius-pill); background: var(--gh-bg); color: #fff; font-size: 12px; font-weight: 500; }
+  .state svg { width: 14px; height: 14px; }
+  .mergebox { margin-top: 16px; border: 1px solid var(--gh-bg); border-radius: var(--radius-lg); padding: 10px 12px; font-size: 12px; display: flex; gap: 8px; align-items: flex-start; }
+  .mergebox svg { color: var(--gh); margin-top: 2px; }
+  .ptabs .right { margin-left: auto; display: flex; gap: 2px; }
+  .doc { flex: 1; overflow-y: auto; padding: 16px; }
+  .doc .ref { font-size: 12px; margin-bottom: 4px; }
+  .doc h1 { font-size: 16px; font-weight: 600; line-height: 1.4; margin-bottom: 8px; }
+  .doc .by { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 16px; }
+  .doc h2 { font-size: 13px; font-weight: 600; margin: 16px 0 4px; }
+  .doc p, .doc li { font-size: 13px; color: #d4d4d8; }
+  .doc ul { padding-left: 18px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); }
+
+  .statusbar { height: 28px; display: flex; align-items: center; gap: 16px; padding: 0 12px; border-top: 1px solid var(--color-border); font-size: 11px; color: var(--color-fg-muted); }
+  .statusbar .h { display: inline-flex; align-items: center; gap: 6px; }
+  .statusbar .sp { flex: 1; }
+  .statusbar .dot.w { background: var(--color-warning); }
+</style>
+<style>
+  body { font-variant-numeric: tabular-nums; }
+  .settings { flex: 1; display: flex; min-width: 0; min-height: 0; }
+  .settings-nav { width: 200px; flex: none; padding: 22px 12px; border-right: 1px solid var(--color-border); }
+  .settings-nav h2 { font-size: 12px; color: var(--color-fg-muted); font-weight: 500; padding: 0 10px 12px; }
+  .settings-nav button { width: 100%; text-align: left; padding: 7px 10px; border-radius: var(--radius-md); color: var(--color-fg-muted); font-size: 13px; }
+  .settings-nav button:hover, .settings-nav button.active { background: var(--color-surface-elevated); color: var(--color-fg); }
+  .settings-nav button.active { font-weight: 500; }
+  .settings-body { flex: 1; min-width: 0; overflow-y: auto; }
+  .settings-inner { max-width: 880px; padding: 28px 36px 48px; margin: 0 auto; }
+  .heading { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 26px; }
+  .heading h1 { font-size: 22px; line-height: 1.25; letter-spacing: -.02em; font-weight: 600; }
+  .heading p, .section-desc { font-size: 12px; color: var(--color-fg-muted); margin-top: 4px; }
+  .heading .btn { margin-left: auto; }
+  .section { margin-bottom: 28px; }
+  .section h2 { font-size: 15px; font-weight: 600; }
+  .section-head { margin-bottom: 12px; }
+  .sub-row { display: grid; grid-template-columns: 178px 1fr 120px; gap: 12px; align-items: center; }
+  .harness-name { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+  .sub-detail { display: block; font-size: 11px; color: var(--color-fg-muted); font-weight: 400; margin-left: 24px; }
+  .chips { display: flex; gap: 5px; flex-wrap: wrap; }
+  .model-chip { font-size: 10px; color: var(--color-fg-muted); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 2px 5px; white-space: nowrap; }
+  .sub-status { font-size: 11px; color: var(--color-fg-muted); text-align: right; }
+  .sub-status .online, .state-live { color: var(--color-success); }
+  .state-skipped { color: var(--color-warning); }
+  .generate-body { padding: 16px; }
+  .field-label { display: block; font-size: 12px; font-weight: 500; margin-bottom: 8px; }
+  .presets { display: flex; gap: 8px; margin-bottom: 15px; }
+  .presets label { display: flex; align-items: center; gap: 6px; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 6px 10px; font-size: 12px; }
+  input[type=checkbox], input[type=radio] { accent-color: var(--color-accent); }
+  .rules { display: grid; gap: 9px; font-size: 12px; }
+  .rules label { display: flex; align-items: center; gap: 8px; }
+  .number { width: 58px; margin-left: 4px; }
+  select, input[type=number], input.team-name { background: var(--color-bg); color: var(--color-fg); border: 1px solid var(--color-border); border-radius: var(--radius-md); font: inherit; padding: 5px 8px; }
+  .generate-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+  .preview { border-top: 1px solid var(--color-border); padding: 14px 16px 16px; font-size: 12px; }
+  .preview[hidden] { display: none; }
+  .preview h3 { font-size: 12px; margin-bottom: 8px; }
+  .diff { display: grid; gap: 6px; color: var(--color-fg-muted); }
+  .diff strong { color: var(--color-fg); font-weight: 500; }
+  .team-card + .team-card { margin-top: 12px; }
+  .team-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; }
+  input.team-name { width: 115px; font-weight: 600; font-size: 13px; }
+  .team-head .role-label { margin-left: auto; color: var(--color-fg-muted); font-size: 11px; }
+  .team-head select, .step select { font-size: 12px; }
+  .team-caption { padding: 0 14px 8px; font-size: 11px; color: var(--color-fg-muted); }
+  .step { display: grid; grid-template-columns: 14px 18px 95px minmax(130px, 1fr) minmax(145px, 1.3fr) 70px; gap: 8px; align-items: center; padding: 8px 14px; border-top: 1px solid var(--color-border); font-size: 12px; }
+  .handle { color: var(--color-fg-muted); cursor: grab; }
+  .condition { color: var(--color-fg-muted); font-size: 11px; }
+  .step-status { text-align: right; font-size: 11px; }
+  .team-actions { display: flex; justify-content: space-between; padding: 9px 10px; border-top: 1px solid var(--color-border); }
+  .section-footer { margin-top: 12px; }
+  [hidden] { display: none !important; }
+  .setting-row { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:13px 16px; font-size:13px; }
+  .setting-row + .setting-row { border-top:1px solid var(--color-border); }
+  .setting-row strong { display:block; font-size:12px; font-weight:500; }
+  .setting-row p, .help { color:var(--color-fg-muted); font-size:11px; margin-top:3px; }
+  .controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  input[type=text], input[type=search] { background:var(--color-bg); color:var(--color-fg); border:1px solid var(--color-border); border-radius:var(--radius-md); font:inherit; padding:6px 8px; }
+  input.path { width:260px; font-size:12px; }
+  .segments { display:flex; padding:3px; border:1px solid var(--color-border); border-radius:var(--radius-md); gap:2px; }
+  .segments label { padding:4px 9px; border-radius:var(--radius-sm); color:var(--color-fg-muted); cursor:pointer; font-size:12px; }
+  .segments label:has(input:checked) { background:var(--color-surface-elevated); color:var(--color-fg); }
+  .segments input { position:absolute; opacity:0; }
+  .switch input { position:absolute; opacity:0; }
+  .switch .track { background:var(--color-surface-elevated); border:1px solid var(--color-border); cursor:pointer; }
+  .switch .track::after { left:2px; right:auto; top:1px; background:var(--color-fg-muted); }
+  .switch input:checked + .track { background:var(--color-accent); }
+  .switch input:checked + .track::after { left:auto; right:1px; background:var(--color-accent-fg); }
+  .switch input:focus-visible + .track, .segments label:has(input:focus-visible) { outline:2px solid var(--color-ring); }
+  .harness-card { margin-bottom:12px; padding:14px 16px; }
+  .harness-top { display:flex; align-items:center; gap:8px; }
+  .harness-top .switch { margin-left:auto; }
+  .harness-meta { margin:7px 0 12px 24px; color:var(--color-fg-muted); font-size:11px; }
+  .harness-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; border-top:1px solid var(--color-border); padding-top:12px; }
+  .model-row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px; font-size:11px; }
+  .model-row select { font-size:11px; }
+  .harness-actions { display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; }
+  .mini-table { width:100%; border-collapse:collapse; font-size:12px; text-align:left; }
+  .mini-table th { color:var(--color-fg-muted); font-size:11px; font-weight:500; }
+  .mini-table th, .mini-table td { padding:10px 14px; border-bottom:1px solid var(--color-border); }
+  .mini-table tr:last-child td { border-bottom:0; }
+  .legend { display:flex; flex-wrap:wrap; gap:7px; padding:14px 16px; }
+  .legend span { color:var(--gh); background:color-mix(in srgb, var(--gh) 12%, transparent); border:1px solid color-mix(in srgb, var(--gh) 35%, transparent); border-radius:var(--radius-md); padding:3px 7px; font-size:11px; }
+  .toast { position:fixed; right:24px; bottom:44px; background:var(--color-surface-elevated); border:1px solid var(--color-border); border-radius:var(--radius-md); padding:8px 12px; font-size:12px; box-shadow:0 8px 24px #0006; z-index:20; }
+  .checklist { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:14px 16px; font-size:12px; }
+  .checklist label { display:flex; gap:8px; align-items:center; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="sb-header">
+      <div class="brand">
+        <div class="logo"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18M12 3v18"/></svg></div>
+        <span class="brand-name">bentobox</span>
+        <span class="brand-ver mono muted">0.1</span>
+      </div>
+      <div class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        Search sessions
+        <span class="kbd">⌘K</span>
+      </div>
+    </div>
+
+    <div class="sb-content">
+      <div class="group-label">Projects
+        <button class="btn btn-ghost" title="Add project"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+
+      <!-- Project: bentobox (open) — covers every session state -->
+      <div class="proj open">
+        <button class="proj-btn" data-toggle>
+          <svg class="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+          <span class="avatar">B<span class="ping on"></span></span>
+          <span class="proj-name">bentobox</span>
+          <span class="proj-meta"><span class="summary">1 needs you</span><span class="mono">main</span></span>
+        </button>
+        <div class="sub">
+          <button class="item active" title="omp is asking to write src-tauri/src/github/mod.rs">
+            <span class="st"><i class="need"></i></span>
+            <span class="title">ACP multi-harness sync</span>
+            <span class="meta warn">Approve</span>
+          </button>
+          <button class="item" title="codex running in task/wt-gc">
+            <span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span>
+            <span class="title">Worktree cleanup rules</span>
+            <span class="meta">1:12</span>
+          </button>
+          <button class="item" title="Plan mode, read-only">
+            <span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span>
+            <span class="title">SQLite event store</span>
+            <span class="meta">plan</span>
+          </button>
+          <button class="item" title="task/gh-labels ready to merge">
+            <span class="st"><svg class="ok" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="title">GitHub label sync</span>
+            <span class="meta"><span class="add">+21</span> <span class="del">−9</span></span>
+          </button>
+          <button class="item" title="cargo check failed">
+            <span class="st"><i class="fail"></i></span>
+            <span class="title">Fix CI flake</span>
+            <span class="meta err">Failed</span>
+          </button>
+          <button class="item">
+            <span class="st"><i class="idle"></i></span>
+            <span class="title">Tauri updater spike</span>
+            <span class="meta">2d</span>
+          </button>
+          <button class="item new">
+            <span class="st"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M12 5v14M5 12h14"/></svg></span>
+            <span class="title">New session</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Project: claude-agent-runner (open, quieter) -->
+      <div class="proj open">
+        <button class="proj-btn" data-toggle>
+          <svg class="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+          <span class="avatar">C</span>
+          <span class="proj-name">claude-agent-runner</span>
+          <span class="proj-meta"><span class="summary">1 running</span><span class="mono">dev</span></span>
+        </button>
+        <div class="sub">
+          <button class="item">
+            <span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span>
+            <span class="title">SDK usage probe</span>
+            <span class="meta">0:08</span>
+          </button>
+          <button class="item">
+            <span class="st"><svg class="ok" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span class="title">Fix stdio framing</span>
+            <span class="meta">merged</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Project: collapsed, summary still visible -->
+      <div class="proj">
+        <button class="proj-btn" data-toggle>
+          <svg class="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+          <span class="avatar">O</span>
+          <span class="proj-name">oh-my-pi</span>
+          <span class="proj-meta"><span class="summary">2 running</span></span>
+        </button>
+        <div class="sub">
+          <button class="item"><span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span><span class="title">Plugin loader</span><span class="meta">4:30</span></button>
+          <button class="item"><span class="st"><svg class="spin" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span><span class="title">ACP permission map</span><span class="meta">0:51</span></button>
+        </div>
+      </div>
+
+      <!-- Project: collapsed, nothing happening -->
+      <div class="proj">
+        <button class="proj-btn" data-toggle>
+          <svg class="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+          <span class="avatar">D</span>
+          <span class="proj-name">dotfiles</span>
+          <span class="proj-meta"><span class="summary">idle</span></span>
+        </button>
+        <div class="sub"><button class="item new"><span class="st"></span><span class="title">No sessions</span></button></div>
+      </div>
+    </div>
+
+    <div class="sb-footer">
+      <div class="teams">
+        <div class="group-label">Teams
+          <button class="btn btn-ghost btn-icon" data-goto="settings-teams" title="Manage teams"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+        </div>
+        <button class="team" data-goto="settings-teams" title="Planning + review. Claude opus → Codex gpt-6.1">
+          <span class="tname">frontier</span><span class="role">orchestrator</span>
+          <span class="chain"><span class="hx live">Cl</span><span class="ar">›</span><span class="hx">Cx</span></span>
+        </button>
+        <button class="team" data-goto="settings-teams" title="Sub-agents. omp haiku skipped (rate limited), Codex mini live, pi offline">
+          <span class="tname">cheaper</span><span class="role">sub-agents</span>
+          <span class="chain"><span class="hx skip">om</span><span class="ar">›</span><span class="hx live">Cx</span><span class="ar">›</span><span class="hx">pi</span></span>
+        </button>
+        <button class="team" data-goto="settings-teams" title="Diff review. Claude sonnet → omp">
+          <span class="tname">review</span><span class="role">review</span>
+          <span class="chain"><span class="hx live">Cl</span><span class="ar">›</span><span class="hx">om</span></span>
+        </button>
+      </div>
+      <button class="foot-item" data-goto="settings-teams">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        <span>Settings</span>
+        <span class="kbd">⌘,</span>
+      </button>
+      <button class="foot-item" id="collapse">
+        <svg class="collapse-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M16 10l-2 2 2 2"/></svg>
+        <span>Collapse sidebar</span>
+        <span class="kbd">⌘B</span>
+      </button>
+    </div>
+  </aside>
+<main class="main">
+  <div class="topbar"><div class="crumb"><span class="muted">Settings</span><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg><span id="section-crumb">Teams</span></div><div class="right"><button class="btn btn-ghost btn-icon" data-goto="project-tree-shadcn" aria-label="Close settings" title="Back to session"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div></div>
+  <div class="settings">
+    <nav class="settings-nav" aria-label="Settings sections"><h2>Settings</h2><button data-section="general">General</button><button data-section="harnesses">Harnesses</button><button data-section="teams" class="active" aria-current="page">Teams</button><button data-section="defaults">Defaults</button><button data-section="github">GitHub</button><button data-section="worktrees">Worktrees</button><button data-section="keybindings">Keybindings</button></nav>
+    <div class="settings-body"><div class="settings-inner">
+      <div id="teams" class="settings-panel">
+      <div class="heading"><div><h1>Teams</h1><p>Configure roles and ordered model fallbacks for your agents.</p></div><button class="btn btn-outline btn-sm" data-goto="project-tree-shadcn"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6M9 12h12"/></svg>Back to session</button></div>
+      <section class="section"><div class="section-head"><h2>Detected subscriptions</h2><p class="section-desc">Authentication is managed by each harness. Model availability depends on your account.</p></div>
+        <div class="card">
+          <div class="card-row sub-row"><div><div class="harness-name"><span class="hx">Cl</span>Claude Code</div><span class="sub-detail">Max plan</span></div><div class="chips"><span class="model-chip mono">opus-5.5</span><span class="model-chip mono">sonnet-5.5</span></div><div class="sub-status"><span class="online">● Signed in</span><br>quota Unavailable</div></div>
+          <div class="card-row sub-row"><div><div class="harness-name"><span class="hx">Cx</span>Codex</div><span class="sub-detail">ChatGPT Plus</span></div><div class="chips"><span class="model-chip mono">gpt-6.1</span><span class="model-chip mono">gpt-6.1-mini</span></div><div class="sub-status"><span class="online">● Signed in</span><br>quota Unavailable</div></div>
+          <div class="card-row sub-row"><div><div class="harness-name"><span class="hx">om</span>omp</div><span class="sub-detail">API key via env</span></div><div class="chips"><span class="model-chip mono">haiku-5.5</span><span class="model-chip mono">sonnet-5.5</span></div><div class="sub-status"><span class="online">● Signed in</span><br>quota Unavailable</div></div>
+          <div class="card-row sub-row"><div><div class="harness-name"><span class="hx">pi</span>pi (CLI)</div><span class="sub-detail">Local</span></div><div class="chips"><span class="model-chip mono">local</span></div><div class="sub-status"><span class="state-skipped">● Offline</span><br>quota Unavailable</div></div>
+        </div>
+      </section>
+      <section class="section"><div class="section-head"><h2>Generate teams from my subscriptions</h2><p class="section-desc">Choose your priorities, then review suggested changes before applying them.</p></div>
+        <div class="card"><div class="generate-body"><span class="field-label">Goal preset</span><div class="presets"><label><input type="radio" name="goal"> Cheapest</label><label><input type="radio" name="goal" checked> Balanced</label><label><input type="radio" name="goal"> Best quality</label></div>
+          <div class="rules"><label><input type="checkbox" checked> Use every subscription before paid API</label><label><input type="checkbox"> Prefer local models for sub-agents</label><label><input type="checkbox" checked> Never use frontier models for sub-agents</label><label>Max fallback depth <input class="number" type="number" value="3" min="1" max="10"></label></div>
+          <div class="generate-actions"><button class="btn btn-default btn-sm" id="generate">Generate teams</button><span class="muted">Nothing changes until you apply.</span></div></div>
+          <div class="preview" id="preview" hidden><h3>Preview changes</h3><div class="diff"><div><span class="add mono">+</span> <strong class="mono">cheaper</strong> · omp haiku-5.5 → Codex gpt-6.1-mini → pi local</div><div><span class="state-skipped mono">~</span> <strong class="mono">frontier</strong> · add Codex gpt-6.1 as fallback</div></div><div class="generate-actions"><button class="btn btn-default btn-sm">Apply</button><button class="btn btn-outline btn-sm" id="discard">Discard</button></div></div>
+        </div>
+      </section>
+      <section class="section"><div class="section-head"><h2>Teams</h2><p class="section-desc">A team is a role and an ordered fallback chain. If a step is rate limited, out of quota, or offline, the next available step is used.</p></div>
+        <div class="card team-card"><div class="team-head"><input class="team-name mono" aria-label="Team name frontier" value="frontier"><span class="badge">Default</span><label class="role-label" for="role-frontier">Role</label><select id="role-frontier"><option>Orchestrator</option><option>Sub-agents</option><option>Review</option></select></div><div class="team-caption">Read-only planning and delegation · fallback order</div>
+          <div class="step"><span class="handle" aria-label="Drag to reorder">⠿</span><span class="hx">Cl</span><span>Claude Code</span><select aria-label="Frontier Claude model"><option>opus-5.5</option><option>sonnet-5.5</option></select><span class="condition">First choice</span><span class="step-status state-live">● Live</span></div>
+          <div class="step"><span class="handle" aria-label="Drag to reorder">⠿</span><span class="hx">Cx</span><span>Codex</span><select aria-label="Frontier Codex model"><option>gpt-6.1</option><option>gpt-6.1-mini</option></select><span class="condition">on rate limit / quota / offline</span><span class="step-status muted">Standby</span></div>
+          <div class="team-actions"><button class="btn btn-ghost btn-sm">+ Add step</button><button class="btn btn-outline btn-sm">Set default for role</button></div></div>
+        <div class="card team-card"><div class="team-head"><input class="team-name mono" aria-label="Team name cheaper" value="cheaper"><label class="role-label" for="role-cheaper">Role</label><select id="role-cheaper"><option>Sub-agents</option><option>Orchestrator</option><option>Review</option></select></div><div class="team-caption">Work in isolated git worktrees · fallback order</div>
+          <div class="step"><span class="handle" aria-label="Drag to reorder">⠿</span><span class="hx">om</span><span>omp</span><select aria-label="Cheaper omp model"><option>haiku-5.5</option><option>sonnet-5.5</option></select><span class="condition">First choice · rate limited</span><span class="step-status state-skipped">● Skipped</span></div>
+          <div class="step"><span class="handle" aria-label="Drag to reorder">⠿</span><span class="hx">Cx</span><span>Codex</span><select aria-label="Cheaper Codex model"><option>gpt-6.1-mini</option><option>gpt-6.1</option></select><span class="condition">on rate limit / quota / offline</span><span class="step-status state-live">● Live</span></div>
+          <div class="step"><span class="handle" aria-label="Drag to reorder">⠿</span><span class="hx">pi</span><span>pi (CLI)</span><select aria-label="Cheaper pi model"><option>local</option></select><span class="condition">on rate limit / quota / offline</span><span class="step-status muted">● Offline</span></div>
+          <div class="team-actions"><button class="btn btn-ghost btn-sm">+ Add step</button><button class="btn btn-outline btn-sm">Set default for role</button></div></div>
+        <div class="card team-card"><div class="team-head"><input class="team-name mono" aria-label="Team name review" value="review"><label class="role-label" for="role-review">Role</label><select id="role-review"><option>Review</option><option>Orchestrator</option><option>Sub-agents</option></select></div><div class="team-caption">Diff and implementation review · fallback order</div>
+          <div class="step"><span class="handle" aria-label="Drag to reorder">⠿</span><span class="hx">Cl</span><span>Claude Code</span><select aria-label="Review Claude model"><option>sonnet-5.5</option><option>opus-5.5</option></select><span class="condition">First choice</span><span class="step-status state-live">● Live</span></div>
+          <div class="step"><span class="handle" aria-label="Drag to reorder">⠿</span><span class="hx">om</span><span>omp</span><select aria-label="Review omp model"><option>sonnet-5.5</option><option>haiku-5.5</option></select><span class="condition">on rate limit / quota / offline</span><span class="step-status muted">Standby</span></div>
+          <div class="team-actions"><button class="btn btn-ghost btn-sm">+ Add step</button><button class="btn btn-outline btn-sm">Set default for role</button></div></div>
+        <div class="section-footer"><button class="btn btn-outline"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New team</button></div>
+      </section>
+      </div>
+      <div id="general" class="settings-panel" hidden>
+        <div class="heading"><div><h1>General</h1><p>Personalize your workspace and app preferences.</p></div></div>
+        <section class="section"><div class="section-head"><h2>Appearance</h2><p class="section-desc">Make BentoBox feel at home.</p></div><div class="card">
+          <div class="setting-row"><div><strong>Theme</strong><p>Choose how BentoBox looks.</p></div><div class="segments" aria-label="Theme"><label><input type="radio" name="theme" checked>System</label><label><input type="radio" name="theme">Dark</label><label><input type="radio" name="theme">Light</label></div></div>
+          <div class="setting-row"><div><strong>Font size</strong><p>Text size throughout the app.</p></div><select aria-label="Font size"><option>12 px</option><option selected>13 px</option><option>14 px</option><option>16 px</option></select></div>
+        </div></section>
+        <section class="section"><div class="section-head"><h2>Application</h2><p class="section-desc">Startup, projects, and privacy.</p></div><div class="card">
+          <div class="setting-row"><div><strong>Launch at login</strong><p>Open BentoBox when you sign in.</p></div><label class="switch"><input type="checkbox" aria-label="Launch at login"><span class="track"></span></label></div>
+          <div class="setting-row"><div><strong>Default project folder</strong><p>Starting location when opening a project.</p></div><div class="controls"><input class="path mono" type="text" value="~/github" aria-label="Default project folder"><button class="btn btn-outline btn-sm">Browse</button></div></div>
+          <div class="setting-row"><div><strong>Anonymous telemetry</strong><p>Share anonymous usage data to improve BentoBox.</p></div><label class="switch"><input type="checkbox" aria-label="Anonymous telemetry"><span class="track"></span></label></div>
+        </div></section>
+        <section class="section"><div class="section-head"><h2>Updates</h2><p class="section-desc">Manage releases and check your installed version.</p></div><div class="card">
+          <div class="setting-row"><div><strong>Update channel</strong><p>Stable releases are recommended.</p></div><select aria-label="Update channel"><option>Stable</option><option>Beta</option></select></div>
+          <div class="setting-row"><div><strong>App version <span class="mono muted">0.1.0</span></strong><p>You're on the Stable channel.</p></div><button class="btn btn-outline btn-sm">Check for updates</button></div>
+        </div></section>
+      </div>
+      <div id="harnesses" class="settings-panel" hidden>
+        <div class="heading"><div><h1>Harnesses</h1><p>Manage detected agent CLIs, models, and concurrency.</p></div></div>
+        <section class="section"><div class="section-head"><h2>Installed harnesses</h2><p class="section-desc">Authentication belongs to each agent's own login. BentoBox never stores provider keys. Account quota may be unavailable.</p></div><div id="harness-list"></div></section>
+        <section class="section"><div class="section-head"><h2>Add custom harness</h2><p class="section-desc">Configure a command available on your machine.</p></div><div class="card"><div class="setting-row"><label>Command<br><input type="text" class="path mono" placeholder="e.g. my-agent" aria-label="Custom harness command"></label><label>Arguments<br><input type="text" class="path mono" placeholder="e.g. --stdio" aria-label="Custom harness arguments"></label><button class="btn btn-outline btn-sm">Add custom harness</button></div></div></section>
+      </div>
+      <div id="defaults" class="settings-panel" hidden>
+        <div class="heading"><div><h1>Defaults</h1><p>Set routing and approval preferences for new sessions.</p></div></div>
+        <section class="section"><div class="section-head"><h2>Default teams</h2><p class="section-desc">Choose a team for each role.</p></div><div class="card">
+          <div class="setting-row"><strong>Orchestrator</strong><select aria-label="Orchestrator default team"><option>frontier</option><option>cheaper</option><option>review</option></select></div>
+          <div class="setting-row"><strong>Sub-agents</strong><select aria-label="Sub-agents default team"><option>cheaper</option><option>frontier</option><option>review</option></select></div>
+          <div class="setting-row"><strong>Review</strong><select aria-label="Review default team"><option>review</option><option>frontier</option><option>cheaper</option></select></div>
+          <div class="setting-row"><div><strong>Default effort</strong><p>Used when no model-specific effort is set.</p></div><select aria-label="Default effort"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
+        </div></section>
+        <section class="section"><div class="section-head"><h2>Plan approval</h2><p class="section-desc">Keep the orchestrator read-only while deciding what needs your review.</p></div><div class="card">
+          <div class="setting-row"><div><strong>Auto-approve small plans</strong><p>Only plans within both limits are eligible.</p></div><label class="switch"><input type="checkbox" aria-label="Auto-approve small plans"><span class="track"></span></label></div>
+          <div class="setting-row"><div class="controls"><label>Max files <input class="number" type="number" min="1" value="3"></label><label>Max est. tokens <input type="number" min="1" value="4000" style="width:90px"></label></div></div>
+          <div class="setting-row"><strong>Require approval for</strong></div><div class="checklist"><label><input type="checkbox" checked> File writes outside worktree</label><label><input type="checkbox" checked> Shell commands</label><label><input type="checkbox" checked> Network</label><label><input type="checkbox" checked> Git push</label></div>
+        </div></section>
+        <section class="section"><div class="section-head"><h2>Inline routing</h2><p class="section-desc">Route one message directly with <span class="mono">@harness/model:effort</span> or <span class="mono">@team:name</span>.</p></div><div class="card"><table class="mini-table"><thead><tr><th>Example</th><th>Routes to</th></tr></thead><tbody><tr><td class="mono">@codex/gpt-6.1:high</td><td>Codex · gpt-6.1 · high effort</td></tr><tr><td class="mono">@claude/sonnet-5.5</td><td>Claude · sonnet-5.5 · model default effort</td></tr><tr><td class="mono">@team:cheaper</td><td>Cheaper team fallback chain</td></tr><tr><td class="mono">@omp/haiku-5.5:low</td><td>omp · haiku-5.5 · low effort</td></tr></tbody></table><div class="setting-row"><div><strong>Routing rules</strong><p>Effort is optional and falls back to the model default. An inline route overrides the session team for that message only.</p></div></div><div class="setting-row"><strong>If the harness is unavailable</strong><div class="controls"><label><input type="radio" name="unavailable" checked> Ask me</label><label><input type="radio" name="unavailable"> Fall back to team chain</label></div></div></div></section>
+      </div>
+      <div id="github" class="settings-panel" hidden>
+        <div class="heading"><div><h1>GitHub</h1><p>Connect your workflow using the GitHub CLI.</p></div></div>
+        <section class="section"><div class="section-head"><h2>Connection</h2><p class="section-desc">BentoBox uses your existing gh CLI authentication.</p></div><div class="card"><div class="setting-row"><div><strong><span class="state-live">● Detected</span> · gh CLI</strong><p class="mono">/opt/homebrew/bin/gh · signed in as @JuniYadi</p></div><button class="btn btn-outline btn-sm">Re-check</button></div><div class="setting-row"><strong>Default repository</strong><input type="text" class="path mono" value="juniyadi/bentobox" aria-label="Default repository"></div><div class="setting-row"><strong>Branch prefix</strong><input type="text" class="path mono" value="task/" aria-label="Branch prefix"></div></div></section>
+        <section class="section"><div class="section-head"><h2>Pull requests</h2><p class="section-desc">Defaults for pull requests created by agents.</p></div><div class="card"><div class="setting-row"><div><strong>Open as draft by default</strong><p>Keep new pull requests in draft until ready.</p></div><label class="switch"><input type="checkbox" checked aria-label="PR as draft by default"><span class="track"></span></label></div><div class="setting-row"><div><strong>Auto-link issue in PR body</strong><p>Include the linked issue when creating a PR.</p></div><label class="switch"><input type="checkbox" checked aria-label="Auto-link issue in PR body"><span class="track"></span></label></div></div></section>
+        <section class="section"><div class="section-head"><h2>Panel status colors</h2><p class="section-desc">GitHub items in the right panel use these status colors.</p></div><div class="card"><div class="legend"><span style="--gh:#3fb950">● Open <b class="mono">#128</b></span><span style="--gh:#8b949e">● Draft <b class="mono">#129</b></span><span style="--gh:#a371f7">● Merged <b class="mono">#124</b></span><span style="--gh:#f85149">● Closed <b class="mono">#121</b></span><span style="--gh:#d29922">● Conflict <b class="mono">#130</b></span></div></div></section>
+      </div>
+      <div id="worktrees" class="settings-panel" hidden>
+        <div class="heading"><div><h1>Worktrees</h1><p>Control isolated working directories for delegated tasks.</p></div></div>
+        <section class="section"><div class="section-head"><h2>Defaults</h2><p class="section-desc">Each sub-agent works in its own git worktree.</p></div><div class="card"><div class="setting-row"><strong>Base directory</strong><div class="controls"><input class="path mono" type="text" value="~/.bentobox/worktrees" aria-label="Worktree base directory"><button class="btn btn-outline btn-sm">Browse</button></div></div><div class="setting-row"><strong>Naming pattern</strong><input class="path mono" type="text" value="task/{slug}" aria-label="Worktree naming pattern"></div><div class="setting-row"><div><strong>Cleanup after merge</strong><p>Choose when merged worktrees are removed.</p></div><select aria-label="Cleanup after merge"><option>Ask</option><option>Auto</option><option>Never</option></select></div><div class="setting-row"><strong>Max parallel worktrees</strong><input type="number" min="1" value="4" aria-label="Max parallel worktrees" style="width:70px"></div></div></section>
+        <section class="section"><div class="section-head"><h2>Current worktrees</h2><p class="section-desc">Inspect active and completed task directories.</p></div><div class="card"><div class="setting-row"><div><strong>Disk usage · <span class="mono">1.24 GB</span></strong><p>3 worktrees across this project</p></div><button class="btn btn-outline btn-sm">Prune</button></div><table class="mini-table"><thead><tr><th>Branch</th><th>Agent</th><th>Size</th><th>Status</th></tr></thead><tbody><tr><td class="mono">task/acp-sync</td><td>omp</td><td class="mono">420 MB</td><td class="state-live">● Active</td></tr><tr><td class="mono">task/wt-gc</td><td>Codex</td><td class="mono">398 MB</td><td class="state-live">● Active</td></tr><tr><td class="mono">task/gh-labels</td><td>Claude Code</td><td class="mono">422 MB</td><td class="muted">Ready to merge</td></tr></tbody></table></div></section>
+      </div>
+      <div id="keybindings" class="settings-panel" hidden>
+        <div class="heading"><div><h1>Keybindings</h1><p>Find and customize keyboard shortcuts.</p></div></div>
+        <section class="section"><div class="section-head"><h2>Keyboard shortcuts</h2><p class="section-desc">Select Record, then press a new shortcut. Escape cancels.</p></div><div class="card"><div class="setting-row"><input type="search" id="shortcut-search" placeholder="Search actions or shortcuts…" aria-label="Search keybindings" style="width:100%"></div><table class="mini-table"><thead><tr><th>Action</th><th>Shortcut</th><th></th></tr></thead><tbody id="shortcut-list"></tbody></table><p class="help" id="shortcut-empty" hidden style="padding:14px">No shortcuts found.</p></div></section>
+      </div>
+    </div></div>
+  </div>
+</main>
+</div>
+<footer class="statusbar">
+  <span class="h"><span class="dot"></span>Claude</span>
+  <span class="h"><span class="dot"></span>Codex</span>
+  <span class="h"><span class="dot"></span>omp</span>
+  <span class="h"><span class="dot w"></span>pi (CLI)</span>
+  <span class="sp"></span>
+  <span class="mono">1,840 / 200k ctx</span>
+  <span>quota Unavailable</span>
+  <span>gh @JuniYadi</span>
+</footer>
+<div id="saved-toast" class="toast" role="status" aria-live="polite" hidden>✓ Saved</div>
+<script>
+  document.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', () => b.parentElement.classList.toggle('open')));
+  const toggle = () => document.body.classList.toggle('collapsed');
+  document.getElementById('collapse').addEventListener('click', toggle);
+  document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); toggle(); } });
+  document.getElementById('generate').addEventListener('click', () => { document.getElementById('preview').hidden = false; });
+  document.getElementById('discard').addEventListener('click', () => { document.getElementById('preview').hidden = true; });
+  const harnesses = [
+    { name:'Claude Code', icon:'Cl', path:'/opt/homebrew/bin/claude', version:'2.1.0', transport:'ACP stdio', auth:'Signed in', models:['opus-5.5','sonnet-5.5'], limit:2 },
+    { name:'Codex', icon:'Cx', path:'/opt/homebrew/bin/codex', version:'0.80.0', transport:'ACP stdio', auth:'Signed in', models:['gpt-6.1','gpt-6.1-mini'], limit:3 },
+    { name:'omp', icon:'om', path:'/opt/homebrew/bin/omp', version:'0.1.0', transport:'Native CLI', auth:'Signed in', models:['haiku-5.5','sonnet-5.5'], limit:3 },
+    { name:'pi CLI', icon:'pi', path:'/opt/homebrew/bin/pi', version:'0.1.0', transport:'Native CLI', auth:'Offline', models:['local'], limit:1 }
+  ];
+  document.getElementById('harness-list').innerHTML = harnesses.map(h => `<div class="card harness-card"><div class="harness-top"><span class="hx">${h.icon}</span><strong>${h.name}</strong><span class="badge">${h.transport}</span><label class="switch"><input type="checkbox" checked aria-label="Enable ${h.name}"><span class="track"></span></label></div><div class="harness-meta"><span class="mono">${h.path}</span> · v${h.version} · Detected</div><div class="harness-grid"><div><span class="field-label">Models · default effort</span>${h.models.map(m => `<div class="model-row"><span class="mono">${m}</span><select aria-label="${h.name} ${m} default effort"><option>Low</option><option selected>Medium</option><option>High</option></select></div>`).join('')}</div><div><span class="field-label">Agent authentication</span><div class="help"><span class="${h.auth === 'Signed in' ? 'state-live' : 'state-skipped'}">● ${h.auth}</span> · account quota Unavailable</div><div class="harness-actions"><button class="btn btn-outline btn-sm">Re-check</button><button class="btn btn-outline btn-sm">Open login in terminal</button></div><label class="help" style="display:block;margin-top:10px">Concurrency limit <input type="number" min="1" value="${h.limit}" aria-label="${h.name} concurrency limit" style="width:58px"></label></div></div></div>`).join('');
+  const shortcuts = [['Toggle left sidebar','⌘B'],['Toggle right panel','⌥⌘B'],['Command palette','⌘K'],['New session','⌘N'],['Settings','⌘,'],['Approve plan','⌘↵'],['Route mention','@'],['Focus composer','⌘L']];
+  document.getElementById('shortcut-list').innerHTML = shortcuts.map(([action,key]) => `<tr><td>${action}</td><td><span class="kbd">${key}</span></td><td style="text-align:right"><button class="btn btn-outline btn-sm record" aria-label="Record shortcut for ${action}">Record</button></td></tr>`).join('');
+  const nav = [...document.querySelectorAll('.settings-nav [data-section]')];
+  function showSection() {
+    const name = location.hash.slice(1).toLowerCase();
+    const selected = nav.find(button => button.dataset.section === name) || nav.find(button => button.dataset.section === 'teams');
+    nav.forEach(button => { const active = button === selected; button.classList.toggle('active', active); if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current'); document.getElementById(button.dataset.section).hidden = !active; });
+    document.getElementById('section-crumb').textContent = selected.textContent;
+    document.querySelector('.settings-body').scrollTop = 0;
+  }
+  nav.forEach(button => button.addEventListener('click', () => { if (location.hash === '#' + button.dataset.section) showSection(); else location.hash = button.dataset.section; }));
+  window.addEventListener('hashchange', showSection);
+  showSection();
+  const toast = document.getElementById('saved-toast');
+  let toastTimer;
+  function saved() { toast.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.hidden = true; }, 1800); }
+  document.querySelector('.settings-inner').addEventListener('change', e => { if (e.target.matches('input:not([type=search]), select')) saved(); });
+  document.querySelector('.settings-inner').addEventListener('input', e => { if (e.target.matches('input[type=text], input[type=number]')) saved(); });
+  document.getElementById('shortcut-search').addEventListener('input', e => { const query = e.target.value.toLowerCase(); const rows = [...document.querySelectorAll('#shortcut-list tr')]; rows.forEach(row => { row.hidden = !row.textContent.toLowerCase().includes(query); }); document.getElementById('shortcut-empty').hidden = rows.some(row => !row.hidden); });
+  let recording = null;
+  document.getElementById('shortcut-list').addEventListener('click', e => { const button = e.target.closest('.record'); if (!button) return; if (recording) recording.textContent = 'Record'; recording = button; button.textContent = 'Press keys…'; });
+  document.addEventListener('keydown', e => { if (!recording) return; e.preventDefault(); e.stopImmediatePropagation(); if (e.key === 'Escape') { recording.textContent = 'Record'; recording = null; return; } if (['Meta','Control','Alt','Shift'].includes(e.key)) return; const key = e.key === 'Enter' ? '↵' : e.key.length === 1 ? e.key.toUpperCase() : e.key; recording.closest('tr').querySelector('.kbd').textContent = (e.ctrlKey ? '⌃' : '') + (e.altKey ? '⌥' : '') + (e.shiftKey ? '⇧' : '') + (e.metaKey ? '⌘' : '') + key; recording.textContent = 'Record'; recording = null; saved(); }, true);
+</script>
+</body>
+</html>
