@@ -1,0 +1,100 @@
+name: release
+
+# Builds the Tauri desktop app and attaches the bundles to a GitHub Release.
+# - release published: builds every platform and uploads to that release.
+# - workflow_dispatch: dry run; builds every platform and keeps the bundles as
+#   workflow artifacts only (no release is touched).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  verify-version:
+    name: Verify tag matches app version
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compare tag with package.json, tauri.conf.json and Cargo.toml
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          want="${TAG#v}"
+          pkg=$(jq -r .version package.json)
+          conf=$(jq -r .version src-tauri/tauri.conf.json)
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          echo "tag=$want package.json=$pkg tauri.conf.json=$conf Cargo.toml=$cargo"
+          if [ "$pkg" != "$want" ] || [ "$conf" != "$want" ] || [ "$cargo" != "$want" ]; then
+            echo "::error::Release tag $TAG does not match the app version. Bump all three files first."
+            exit 1
+          fi
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: verify-version
+    # Run on dispatch too, where verify-version is skipped.
+    if: ${{ !failure() && !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macOS x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+          - name: Linux x64
+            # Oldest supported Ubuntu gives the widest glibc compatibility.
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Code signing (add these repository secrets to enable):
+          # macOS: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+          #        APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+          # Updater: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+        with:
+          tauriScript: bun run tauri
+          args: --target ${{ matrix.target }}
+          releaseId: ${{ github.event.release.id }}
+          uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
+          retryAttempts: 1
