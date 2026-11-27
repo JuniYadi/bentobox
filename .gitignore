@@ -32,4 +32,12 @@ dist-ssr
 !.env.example
 !.env.sample
 !.env.template
-.design/
+.design/*
+!.design/frames.json
+!.design/tokens.css
+.design/frames/*
+!.design/frames/
+!.design/frames/project-tree-shadcn.html
+!.design/frames/project-tree-plan-approve.html
+!.design/frames/agent-detail.html
+!.design/frames/settings-teams.html

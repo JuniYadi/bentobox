@@ -1,0 +1,102 @@
+{
+  "project": "BentoBox",
+  "entry": "project-tree-shadcn",
+  "frames": [
+    {
+      "id": "project-tree-shadcn",
+      "title": "Project Tree (shadcn)",
+      "file": "frames/project-tree-shadcn.html",
+      "group": "layout-v5",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "position": {
+        "x": 60,
+        "y": 80
+      },
+      "status": "approved",
+      "notes": "Tailwind + shadcn zinc. Sidebar: logo and search on top, Projects group with nested sessions covering needs-approval, running, plan, ready-to-merge, failed, idle and new; collapsed projects keep a summary. Footer: Settings and Collapse sidebar (Cmd+B toggles icon mode). Mode tabs removed; composer has harness/model picker (session override of default). Right panel tabs use GitHub state colors: open green, draft gray, merged purple, closed red, conflict amber.",
+      "links": [
+        {
+          "to": "agent-detail",
+          "label": "Open agent"
+        },
+        {
+          "to": "settings-teams",
+          "label": "Teams / Settings"
+        }
+      ]
+    },
+    {
+      "id": "project-tree-plan-approve",
+      "title": "Plan & Approve (variant)",
+      "file": "frames/project-tree-plan-approve.html",
+      "group": "layout-v5",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "position": {
+        "x": 1600,
+        "y": 80
+      },
+      "status": "approved",
+      "links": [
+        {
+          "to": "project-tree-shadcn",
+          "label": "Approve & build"
+        }
+      ],
+      "notes": "Variant on approved base. Orchestrator only proposes; plan card lists tasks with per-task harness picker, token estimate, Approve & build. Header shows Plan → Approve → Build → Review phase stepper instead of mode tabs."
+    },
+    {
+      "id": "agent-detail",
+      "title": "Agent Detail",
+      "file": "frames/agent-detail.html",
+      "group": "layout-v5",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "position": {
+        "x": 60,
+        "y": 1100
+      },
+      "status": "approved",
+      "links": [
+        {
+          "to": "project-tree-shadcn",
+          "label": "Back"
+        },
+        {
+          "to": "settings-teams",
+          "label": "Team"
+        }
+      ],
+      "notes": "Opened from a sub-agent card. Transcript with handoff prompt, tool calls, pending permission; right panel shows team fallback chain, context, cost, files, checks."
+    },
+    {
+      "id": "settings-teams",
+      "title": "Settings",
+      "file": "frames/settings-teams.html",
+      "group": "layout-v5",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "position": {
+        "x": 1600,
+        "y": 1100
+      },
+      "status": "approved",
+      "links": [
+        {
+          "to": "project-tree-shadcn",
+          "label": "Back"
+        }
+      ],
+      "notes": "Detected subscriptions, rule-based team generation with preview, editable teams with ordered fallback chains."
+    }
+  ]
+}
