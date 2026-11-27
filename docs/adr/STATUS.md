@@ -15,3 +15,7 @@ Generated file; change the ADRs or the code, then run the `status` command. Code
 | ADR-0007.D1 | Structured prompt handoff protocol with pointed file references and constraints | accepted, no code yet | - | - | - |
 | ADR-0008.D1 | GitHub CLI integration for querying and browser-opening issues and pull requests | accepted, code present, no test | - | `src-tauri/src/github/mod.rs`<br>`src/features/github/GitHubPanel.tsx`<br>`src/features/github/api.ts` | - |
 | ADR-0009.D1 | Three-column responsive desktop layout (Sidebar Left | Content | Sidebar Right) | accepted, code present, no test | - | `src/components/layout/ContentArea.tsx`<br>`src/components/layout/SidebarLeft.tsx`<br>`src/components/layout/SidebarRight.tsx`<br>`src/components/layout/ThreeColumnLayout.tsx` | - |
+| ADR-0010.D1 | Orchestrator-only sessions; read-only orchestrator, sub-agents write in worktrees after plan approval (supersedes ADR-0006.D1) | proposed | - | - | - |
+| ADR-0011.D1 | Teams bind a role to an ordered harness/model:effort fallback chain | proposed | - | - | - |
+| ADR-0011.D2 | Teams are generated from detected subscriptions by user rules, previewed before apply | proposed | - | - | - |
+| ADR-0012.D1 | Inline per-message routing via @harness/model[:effort] or @team:name overrides the session team | proposed | - | - | - |

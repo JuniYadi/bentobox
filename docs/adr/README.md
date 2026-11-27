@@ -13,3 +13,6 @@ This directory documents foundational architectural decisions for BentoBox.
 | [0007](./0007-structured-prompt-handoff-protocol.md) | Structured Prompt Handoff Protocol for Agent Delegation | Accepted |
 | [0008](./0008-github-cli-integration.md) | GitHub CLI Integration for Issue and Pull Request Management | Accepted |
 | [0009](./0009-three-column-desktop-layout-architecture.md) | Three-Column Desktop Layout Architecture | Accepted |
+| [0010](./0010-orchestrator-only-sessions-with-plan-approval.md) | Orchestrator-Only Sessions with a Plan Approval Gate (supersedes 0006 when accepted) | Proposed |
+| [0011](./0011-teams-with-fallback-chains.md) | Teams with Fallback Chains, Generated from Subscriptions | Proposed |
+| [0012](./0012-inline-harness-routing-syntax.md) | Inline Harness Routing Syntax | Proposed |
