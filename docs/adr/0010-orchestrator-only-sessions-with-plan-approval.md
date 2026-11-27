@@ -3,7 +3,7 @@ adr: ADR-0010
 decisions:
   D1:
     title: Orchestrator-only sessions; read-only orchestrator, sub-agents write in worktrees after plan approval (supersedes ADR-0006.D1)
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/session/**", "src/features/session/**"]
     protected: false
     use_cases: []

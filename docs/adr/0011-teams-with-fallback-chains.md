@@ -3,13 +3,13 @@ adr: ADR-0011
 decisions:
   D1:
     title: Teams bind a role to an ordered harness/model:effort fallback chain
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/teams/**", "src/features/teams/**"]
     protected: false
     use_cases: []
   D2:
     title: Teams are generated from detected subscriptions by user rules, previewed before apply
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/teams/**", "src/features/teams/**"]
     protected: false
     use_cases: []
