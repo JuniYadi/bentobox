@@ -1,0 +1,19 @@
+@import "tailwindcss";
+@import "./tokens.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+@layer base {
+  * { box-sizing: border-box; }
+  html, body, #root { height: 100%; overflow: hidden; }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-size: var(--body-size);
+    font-family: 'Geist Variable', 'Geist', ui-sans-serif, system-ui, sans-serif;
+  }
+}
+
