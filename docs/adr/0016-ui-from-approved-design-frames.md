@@ -3,31 +3,31 @@ adr: ADR-0016
 decisions:
   D1:
     title: Frontend is built with Tailwind and shadcn/ui from DESIGN.md tokens; approved frames are committed as the visual reference
-    state: proposed
+    state: accepted
     paths: ["src/components/ui/**", "src/styles/**", "src/lib/**", "scripts/design-tokens.*"]
     protected: false
     use_cases: []
   D2:
     title: App shell follows project-tree-shadcn (projects tree, chat, contextual right panel, status bar) (supersedes ADR-0009.D1)
-    state: proposed
+    state: accepted
     paths: ["src/components/layout/**", "src/App.tsx", "src/features/project/**", "src-tauri/src/project/**"]
     protected: false
     use_cases: []
   D3:
     title: Plan approval renders in the chat as a plan card per project-tree-plan-approve
-    state: proposed
+    state: accepted
     paths: ["src/features/session/**"]
     protected: false
     use_cases: []
   D4:
     title: Each sub-agent has a detail view per agent-detail, built from the event log
-    state: proposed
+    state: accepted
     paths: ["src/features/agent-detail/**"]
     protected: false
     use_cases: []
   D5:
     title: Settings is a full-width view per settings-teams; only sections backed by real data ship, persisted in SQLite
-    state: proposed
+    state: accepted
     paths: ["src/features/settings/**", "src-tauri/src/settings/**"]
     protected: false
     use_cases: []
@@ -58,16 +58,23 @@ D1: **Foundation.**
   - no hardcoded hex colours, including the GitHub Primer palette
 
 D2: **App shell, from `project-tree-shadcn`.** This replaces ADR-0009.D1's column contents. The layout keeps three columns.
-- **Left sidebar.** 256px wide (resizable 200–420px), collapsing to a 52px icon rail.
+- **Sizing follows the window, not fixed px.**
+  - The shell fills the window exactly: 100vw × 100vh, with no page scroll. Only the region bodies scroll.
+  - The frames are drawn at 1440×900. Each frame width becomes a fraction of the window width through one token, `--fw: calc(100vw / 1440)`. A frame width of N px is written as `calc(N * var(--fw))`, never as a px literal.
+  - At a 1440px-wide window every column equals the frame exactly. At other widths each column keeps its share of the screen.
+  - Each column is clamped to the frame's resize limits, so text stays usable on small or very large screens.
+  - Heights stay fixed in rem, because `DESIGN.md` fixes the type size and scaling them would scale the text. That covers the top bar, status bar and list rows.
+- **Left sidebar.**
+  - Width: 256/1440 of the window, clamped 200–420px. It collapses to a 52px icon rail.
   - The header has a session search, opened with ⌘K.
   - Below it sits a **Projects** tree. A project is a registered local repository, and its sessions are nested beneath it with a status glyph and right-aligned meta.
   - The footer holds a teams summary, Settings (⌘,) and Collapse (⌘B).
-- **Content.** The session chat (max 720px wide) and the composer: textarea, team or harness picker, `@` route chip, and a Worktree switch.
-- **Right panel.** 360px wide (resizable 280–640px), toggled with ⌥⌘B. It is contextual: in a session it is the GitHub issue and PR inspector (ADR-0008), one tab per item, with a detail view.
+- **Content.** Takes the remaining width. It holds the session chat, with a max width of 720/1440 of the window, and the composer: textarea, team or harness picker, `@` route chip, and a Worktree switch.
+- **Right panel.** 360/1440 of the window, clamped 280–640px, toggled with ⌥⌘B. It is contextual: in a session it is the GitHub issue and PR inspector (ADR-0008), one tab per item, with a detail view.
 - **Status bar.** 28px. It shows harness dots (ADR-0001/0004), session context usage and account quota as separate values (ADR-0002), and the `gh` login (ADR-0008).
 - **Backend.** Projects are stored in SQLite (ADR-0005), with commands to add, list and remove them. Sessions reference a project.
 - **Small windows.** Below 1200px of window width the right panel starts collapsed, so content stays usable at ADR-0014's 1024px minimum.
-- **Persistence.** Panel widths and collapsed states are kept across launches, as ADR-0009 required.
+- **Persistence.** Panel widths are kept across launches as a fraction of the window width, not as px, so a user's resize still fits after the window size changes. Collapsed states are kept too, as ADR-0009 required.
 
 D3: **Plan approval, from `project-tree-plan-approve`.**
 - While a session's plan is in Plan or Approve, the chat shows a **plan card**:
@@ -92,7 +99,7 @@ D4: **Sub-agent detail, from `agent-detail`.**
 
 D5: **Settings, from `settings-teams`.**
 - A full-width view opened with ⌘, or from the teams footer. The right panel is hidden.
-- A 200px section nav sits beside a form area up to 880px wide. Sections: General, Harnesses, Teams, Defaults, GitHub, Worktrees, Keybindings.
+- A section nav (200/1440 of the window, clamped 160–240px) sits beside a form area (max 880/1440 of the window), using the same `--fw` token as D2. Sections: General, Harnesses, Teams, Defaults, GitHub, Worktrees, Keybindings.
 - A section ships only when real data backs it:
   - **Teams:** ADR-0011, including the generate-from-subscriptions preview with Apply and Discard.
   - **Harnesses:** ADR-0001 and ADR-0004.
@@ -117,5 +124,8 @@ D5: **Settings, from `settings-teams`.**
   - the plan card's Approve sends the displayed revision
   - an unknown estimate renders as unknown, not 0
   - the right panel is collapsed below 1200px
+  - at a 1440×900 window, each shell region's measured box equals the frame's box within 0.5px
+  - at 1024×640, 1280×800 and 1920×1080 there is no document scroll in either direction, and each column keeps its frame share or sits at its clamp
+  - no layout width in components is a px literal; widths go through `--fw` or a clamp
   - disabled agent controls show their reason
   - settings changes persist across a restart

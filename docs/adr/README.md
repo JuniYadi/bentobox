@@ -19,4 +19,4 @@ This directory documents foundational architectural decisions for BentoBox.
 | [0013](./0013-release-build-and-distribution-pipeline.md) | Release Build and Distribution Pipeline | Accepted |
 | [0014](./0014-main-window-launch-geometry.md) | Main Window Launch Geometry | Accepted |
 | [0015](./0015-local-rust-build-footprint.md) | Local Rust Build Footprint | Accepted |
-| [0016](./0016-ui-from-approved-design-frames.md) | Build the UI from the Approved Design Frames | Proposed |
+| [0016](./0016-ui-from-approved-design-frames.md) | Build the UI from the Approved Design Frames | Accepted |
