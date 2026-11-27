@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
+import { projectAdd } from "./features/project/api";
 import { createSession, listSessions, setSessionWorktree } from "./features/session/api";
 import { Session } from "./features/session/types";
 import { GhIssue } from "./features/github/api";
@@ -40,7 +41,8 @@ export default function App() {
     const title = window.prompt("Session title", "New session")?.trim();
     if (!title) return;
     try {
-      const session = await createSession(title, workspacePath, true);
+      const project = await projectAdd(workspacePath);
+      const session = await createSession(title, project.id, true, workspacePath);
       setSessions((previous) => [...previous, { ...session, subAgents: [] }]);
       setActiveSessionId(session.id);
       setBackendError(null);

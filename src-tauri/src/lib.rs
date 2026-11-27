@@ -8,6 +8,7 @@ pub mod usage;
 pub mod handoff;
 pub mod session;
 
+pub mod project;
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
@@ -38,6 +39,10 @@ pub fn run() {
             github::gh_check_status,
             github::gh_list_issues,
             github::gh_list_prs,
+            project::project_add,
+            project::project_list,
+            project::project_remove,
+            project::project_sessions,
             session::session_propose_plan,
             session::session_revise_plan,
             session::session_approve_plan,
