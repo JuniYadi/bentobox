@@ -26,6 +26,14 @@ regex = "1"
 serde_json = "1"
 
 
+# Smaller, faster-linking dev builds: keep file:line backtraces for our crate,
+# drop debug info for dependencies (the bulk of target/debug).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1
