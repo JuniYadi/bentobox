@@ -6,7 +6,7 @@ import { generateTokens } from "./design-tokens";
 
 const root = resolve(import.meta.dir, "..");
 /** @adr ADR-0016.D1 */
-export const COMPONENT_SCAN_ROOTS = ["src/components/ui"] as const;
+export const COMPONENT_SCAN_ROOTS = ["src/components", "src/features"] as const;
 
 describe("[ADR-0016.D1] design token generation", () => {
   test("generated output equals the committed tokens.css", async () => {
@@ -21,6 +21,18 @@ describe("[ADR-0016.D1] design token generation", () => {
     const colors = Bun.YAML.parse(frontmatter).colors as Record<string, string>;
     const generated = generateTokens(design);
     for (const [name, value] of Object.entries(colors)) expect(generated).toContain(`--color-${name}: ${value};`);
+  });
+
+  test("every DESIGN.md color key is exposed in the inline theme", async () => {
+    const design = await readFile(join(root, "DESIGN.md"), "utf8");
+    const frontmatter = design.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1];
+    if (!frontmatter) throw new Error("DESIGN.md frontmatter missing");
+    const colors = Bun.YAML.parse(frontmatter).colors as Record<string, string>;
+    const theme = generateTokens(design).match(/@theme inline \{([^}]*)\}/)?.[1];
+    if (!theme) throw new Error("Generated inline theme missing");
+    for (const name of Object.keys(colors)) expect(theme).toContain(`--color-${name}:`);
+    for (const name of ["success", "warning", "danger"]) expect(theme).toContain(`--color-${name}: var(--color-${name});`);
+    expect(theme).toContain("--color-destructive: var(--destructive);");
   });
 
   test("a changed token in an isolated temporary DESIGN.md changes output", async () => {

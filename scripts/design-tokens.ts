@@ -52,7 +52,11 @@ export function generateTokens(markdown: string): string {
   );
   for (const [name, source] of Object.entries(aliases)) lines.push(`  --${name}: var(--color-${source});`);
   lines.push("}", "", "@theme inline {");
-  for (const name of ["background", "foreground", "card", "popover", "primary", "primary-foreground", "secondary", "muted", "muted-foreground", "accent", "border", "input", "ring", "destructive", "sidebar", "sidebar-foreground", "sidebar-primary", "sidebar-primary-foreground", "sidebar-accent", "sidebar-accent-foreground", "sidebar-border", "sidebar-ring"]) lines.push(`  --color-${name}: var(--${name});`);
+  const themeNames = ["background", "foreground", "card", "popover", "primary", "primary-foreground", "secondary", "muted", "muted-foreground", "accent", "border", "input", "ring", "destructive", "sidebar", "sidebar-foreground", "sidebar-primary", "sidebar-primary-foreground", "sidebar-accent", "sidebar-accent-foreground", "sidebar-border", "sidebar-ring"];
+  for (const name of themeNames) lines.push(`  --color-${name}: var(--${name});`);
+  for (const name of Object.keys(colors)) {
+    if (!themeNames.includes(name)) lines.push(`  --color-${name}: var(--color-${name});`);
+  }
   lines.push("  --radius-sm: var(--radius-sm);", "  --radius-md: var(--radius-md);", "  --radius-lg: var(--radius-lg);", "  --font-sans: var(--design-font-sans);", "  --font-mono: var(--design-font-mono);", "}", "");
   return lines.join("\n");
 }

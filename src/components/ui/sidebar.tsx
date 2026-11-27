@@ -30,7 +30,7 @@ const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
 const SIDEBAR_WIDTH = "var(--sidebar-width)"
 const SIDEBAR_WIDTH_MOBILE = "var(--sidebar-width-mobile, var(--sidebar-width))"
 const SIDEBAR_WIDTH_ICON = "var(--sidebar-width-icon)"
-const SIDEBAR_KEYBOARD_SHORTCUT = "b"
+const SIDEBAR_KEYBOARD_SHORTCUT = "KeyB"
 
 type SidebarContextProps = {
   state: "expanded" | "collapsed"
@@ -97,8 +97,8 @@ function SidebarProvider({
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
-        event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
-        (event.metaKey || event.ctrlKey)
+        event.code === SIDEBAR_KEYBOARD_SHORTCUT &&
+        !event.shiftKey && !event.altKey && (event.metaKey || event.ctrlKey)
       ) {
         event.preventDefault()
         toggleSidebar()
@@ -139,7 +139,7 @@ function SidebarProvider({
             } as React.CSSProperties
           }
           className={cn(
-            "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar",
+            "group/sidebar-wrapper flex min-h-0 w-full has-data-[variant=inset]:bg-sidebar",
             className
           )}
           {...props}
