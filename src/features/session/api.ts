@@ -56,6 +56,8 @@ export interface SessionSummary {
   title: string;
   workspacePath: string;
   optInWorktree: boolean;
+  conciseReplies: boolean;
+  model: string | null;
   createdAt: string;
 }
 
@@ -72,4 +74,14 @@ export function listSessions(): Promise<SessionSummary[]> {
 /** @adr ADR-0010.D1 */
 export function setSessionWorktree(id: number, enabled: boolean): Promise<SessionSummary> {
   return invoke("session_set_worktree", { id, enabled });
+}
+
+/** @adr ADR-0020.D2 */
+export function sessionSetConcise(sessionId: number, enabled: boolean): Promise<void> {
+  return invoke("session_set_concise", { sessionId, enabled });
+}
+
+/** @adr ADR-0021.D2 */
+export function sessionSetModel(sessionId: number, modelId: string | null): Promise<void> {
+  return invoke("session_set_model", { sessionId, modelId });
 }

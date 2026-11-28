@@ -455,10 +455,6 @@ export function AgentDetailView({
               const reason = typeof payload.reason === "string" ? payload.reason : null;
               return (
                 <div key={item.event.id} className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">Task state</span>
-                    <span>{item.event.created_at}</span>
-                  </div>
                   <Card className="flex flex-col gap-1 p-3 text-xs">
                     <div className="flex items-center gap-2">
                       <span
@@ -489,10 +485,6 @@ export function AgentDetailView({
               const text = typeof payload.text === "string" ? payload.text : "";
               return (
                 <div key={item.event.id} className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">Agent message</span>
-                    <span>{item.event.created_at}</span>
-                  </div>
                   <Card className="flex flex-col gap-1 p-3 text-xs">
                     <p className="whitespace-pre-wrap">{text}</p>
                   </Card>

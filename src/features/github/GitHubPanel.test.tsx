@@ -28,7 +28,7 @@ describe("[ADR-0016.D2] GitHub inspector presentation", () => {
 describe("[ADR-0016.D2] status bar presentation", () => {
   test("renders unavailable quota with its backend reason without inventing zero", async () => {
     const source = await readFile(new URL("../../components/layout/StatusBar.tsx", import.meta.url), "utf8");
-    expect(source).toContain('`quota Unavailable (${state.quota.remaining.reason})`');
+    expect(source).toContain('identical ? text : `${state.harnessId} ${text}`');
     expect(source).toContain("quota Unavailable");
     expect(source).not.toContain("quota 0");
     const html = renderToStaticMarkup(<StatusBar selectedSessionId={null} />);

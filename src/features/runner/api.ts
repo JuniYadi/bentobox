@@ -26,6 +26,11 @@ export function runnerSetMode(sessionId: number, taskId: string, modeId: string)
   return invoke("runner_set_mode", { sessionId, taskId, modeId });
 }
 
+/** @adr ADR-0021.D2 */
+export function runnerSetModel(sessionId: number, taskId: string, modelId: string): Promise<void> {
+  return invoke("runner_set_model", { sessionId, taskId, modelId });
+}
+
 /** @adr ADR-0018.D5 */
 export function onSessionTitle(handler: (event: { sessionId: number; title: string }) => void): Promise<() => void> {
   return listen<{ sessionId: number; title: string }>("session:title", (event) => handler(event.payload));

@@ -22,9 +22,9 @@ mock.module("@tauri-apps/api/event", () => ({
   },
 }));
 // Exception: dynamic import is required after mock.module to bind the mocked Tauri modules.
-const { runnerStart, runnerStop, runnerRespondPermission, runnerSend, runnerSetMode, onRunnerEvent, onSessionTitle } = await import("./api");
-// Exception: session API must bind the mocked Tauri invoke implementation.
-const { startDirectRun } = await import("../session/api");
+const { runnerStart, runnerStop, runnerRespondPermission, runnerSend, runnerSetMode, runnerSetModel, onRunnerEvent, onSessionTitle } = await import("./api");
+// Exception: session API must bind the mocked Tauri invoke implementation after mock.module.
+const { startDirectRun, sessionSetConcise, sessionSetModel } = await import("../session/api");
 
 describe("[ADR-0017.D3] runner api wrappers", () => {
   test("[ADR-0018.D1] direct Send proposes, approves the returned revision, and starts", async () => {
@@ -104,4 +104,34 @@ describe("[ADR-0017.D3] runner api wrappers", () => {
     registered!.handler({ payload: { sessionId: 42, eventId: 101 } });
     expect(captured).toEqual([{ sessionId: 42, eventId: 101 }]);
   });
+
+  test("[ADR-0021.D2] runnerSetModel invokes runner_set_model with sessionId, taskId, modelId", async () => {
+    const before = invoked.length;
+    await runnerSetModel(42, "task-1", "sonnet");
+    expect(invoked.slice(before)).toEqual([
+      { cmd: "runner_set_model", args: { sessionId: 42, taskId: "task-1", modelId: "sonnet" } },
+    ]);
+  });
+});
+
+test("[ADR-0020.D2] sessionSetConcise invokes the right command and args", async () => {
+  const before = invoked.length;
+  await sessionSetConcise(42, true);
+  expect(invoked.slice(before)).toEqual([
+    { cmd: "session_set_concise", args: { sessionId: 42, enabled: true } },
+  ]);
+  await sessionSetConcise(42, false);
+  expect(invoked.slice(before + 1)).toEqual([
+    { cmd: "session_set_concise", args: { sessionId: 42, enabled: false } },
+  ]);
+});
+
+test("[ADR-0021.D2] sessionSetModel invokes session_set_model with sessionId and modelId", async () => {
+  const before = invoked.length;
+  await sessionSetModel(42, "sonnet");
+  await sessionSetModel(42, null);
+  expect(invoked.slice(before)).toEqual([
+    { cmd: "session_set_model", args: { sessionId: 42, modelId: "sonnet" } },
+    { cmd: "session_set_model", args: { sessionId: 42, modelId: null } },
+  ]);
 });

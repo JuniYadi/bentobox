@@ -1,4 +1,6 @@
 // @adr ADR-0005.D1
+// @adr ADR-0020.D2
+// @adr ADR-0021.D2
 use regex::Regex;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -9,7 +11,7 @@ use std::{
 };
 use tauri::State;
 
-const LATEST_SCHEMA_VERSION: i64 = 5;
+const LATEST_SCHEMA_VERSION: i64 = 7;
 
 #[derive(Clone)]
 pub struct Store(std::sync::Arc<Mutex<Connection>>);
@@ -87,6 +89,15 @@ impl Store {
                 "CREATE TABLE IF NOT EXISTS session_title_state (session_id INTEGER PRIMARY KEY REFERENCES sessions(id), custom INTEGER NOT NULL DEFAULT 0);
                  PRAGMA user_version = 5;"
             ).map_err(|e| e.to_string())?;
+        }
+        if version < 6 {
+            tx.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN concise_replies INTEGER NOT NULL DEFAULT 0;
+                 PRAGMA user_version = 6;"
+            ).map_err(|e| e.to_string())?;
+        }
+        if version < 7 {
+            tx.execute_batch("ALTER TABLE sessions ADD COLUMN model TEXT; PRAGMA user_version = 7;").map_err(|e| e.to_string())?;
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(Self(std::sync::Arc::new(Mutex::new(conn))))

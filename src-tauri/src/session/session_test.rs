@@ -12,7 +12,7 @@ fn store() -> (Store, std::path::PathBuf) {
     (store, root)
 }
 fn task(id: &str, dependencies: &[&str]) -> PlanTask {
-    PlanTask { id: id.into(), title: id.into(), team: "team".into(), harness: "harness".into(), worktree: true, files: vec![], dependencies: dependencies.iter().map(|s| (*s).into()).collect(), estimated_tokens: Some(100), status: String::new() }
+    PlanTask { id: id.into(), title: id.into(), team: "team".into(), harness: "harness".into(), model: None, worktree: true, files: vec![], dependencies: dependencies.iter().map(|s| (*s).into()).collect(), estimated_tokens: Some(100), status: String::new() }
 }
 fn cleanup(root: &std::path::Path) { std::fs::remove_dir_all(root).unwrap(); }
 
@@ -266,5 +266,70 @@ fn non_git_project_rejects_worktree_opt_in() {
         store.set_session_worktree(session.id, true)
     };
     assert!(set_worktree().unwrap_err().contains("Not a git repository: worktree isolation is unavailable"));
+    cleanup(&root);
+}
+
+#[test]
+fn adr0020_concise_setting_persists_across_reopen_and_validates_session_id() {
+    // [ADR-0020.D2] the setting persists across a Store reopen; session_set_concise with an unknown id errors
+    let (store, root) = store();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::process::Command::new("git").args(["init", "-q"]).current_dir(&repo).status().unwrap();
+    let (repo_root, name) = crate::project::repository_root(&repo).unwrap();
+    let project = store.add_project(&name, &repo_root).unwrap();
+    let session = store.create_named_session("Chat", project.id, "/repo", false).unwrap();
+
+    // Default is false
+    assert!(!session.concise_replies);
+    assert!(!store.session_concise(session.id).unwrap());
+
+    // Error on unknown id
+    assert_eq!(store.set_session_concise(-999, true).unwrap_err(), "unknown session");
+    assert_eq!(store.session_concise(-999).unwrap_err(), "unknown session");
+
+    // Enable concise replies
+    store.set_session_concise(session.id, true).unwrap();
+    assert!(store.session_concise(session.id).unwrap());
+
+    // Survives reopen
+    drop(store);
+    let store = Store::open(root.join("db.sqlite")).unwrap();
+    assert!(store.session_concise(session.id).unwrap());
+    let listed = store.list_sessions().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].concise_replies);
+
+    cleanup(&root);
+}
+
+// [ADR-0021.D2] Model setting persists across reopen, allows clearing, and errors on unknown session id.
+#[test]
+fn adr0021_model_setting_persists_across_reopen_and_validates_session_id() {
+    let (store, root) = store();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::process::Command::new("git").args(["init", "-q"]).current_dir(&repo).status().unwrap();
+    let (repo_root, name) = crate::project::repository_root(&repo).unwrap();
+    let project = store.add_project(&name, &repo_root).unwrap();
+    let summary = store.create_named_session("Test Session", project.id, "/workspace", false).unwrap();
+    assert_eq!(summary.model, None);
+    assert_eq!(store.session_model(summary.id).unwrap(), None);
+
+    store.set_session_model(summary.id, Some("claude-sonnet-4-6")).unwrap();
+    assert_eq!(store.session_model(summary.id).unwrap(), Some("claude-sonnet-4-6".into()));
+
+    let list = store.list_sessions().unwrap();
+    let listed = list.iter().find(|s| s.id == summary.id).unwrap();
+    assert_eq!(listed.model, Some("claude-sonnet-4-6".into()));
+
+    drop(store);
+    let reopened = Store::open(root.join("db.sqlite")).unwrap();
+    assert_eq!(reopened.session_model(summary.id).unwrap(), Some("claude-sonnet-4-6".into()));
+
+    reopened.set_session_model(summary.id, None).unwrap();
+    assert_eq!(reopened.session_model(summary.id).unwrap(), None);
+    assert!(reopened.set_session_model(99999, Some("claude-sonnet-4-6")).is_err());
+    assert!(reopened.session_model(99999).is_err());
     cleanup(&root);
 }

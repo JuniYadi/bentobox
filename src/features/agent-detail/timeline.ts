@@ -77,12 +77,37 @@ export function partitionChatTimeline(events: DbEvent[], task: PlanTask): { chat
   const chatItems: DbEvent[] = [];
   const activityItems: DbEvent[] = [];
   const relevant = taskEvents(events, task);
+  let lastEventWasAgentMessage = false;
+
   for (const event of relevant) {
     const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {};
     const requestId = String(payload.request_id ?? event.id);
     const chat = typeof payload.parent_tool_call_id !== "string" && (event.kind === "user_message" || event.kind === "agent_message" || (event.kind === "permission_request" && isPermissionPending(relevant, requestId, task.status)));
-    (chat ? chatItems : activityItems).push(event);
+
+    if (chat) {
+      if (event.kind === "agent_message" && lastEventWasAgentMessage && chatItems.length > 0) {
+        const prev = chatItems[chatItems.length - 1];
+        const prevPayload = prev.payload && typeof prev.payload === "object" && !Array.isArray(prev.payload) ? prev.payload as Record<string, JsonValue> : {};
+        const itemPayload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {};
+        const prevText = typeof prevPayload.text === "string" ? prevPayload.text : "";
+        const itemText = typeof itemPayload.text === "string" ? itemPayload.text : "";
+        chatItems[chatItems.length - 1] = {
+          ...prev,
+          payload: {
+            ...prevPayload,
+            text: `${prevText}${itemText}`,
+          },
+        };
+      } else {
+        chatItems.push(event);
+      }
+      lastEventWasAgentMessage = event.kind === "agent_message";
+    } else {
+      activityItems.push(event);
+      lastEventWasAgentMessage = false;
+    }
   }
+
   return { chatItems, activityItems };
 }
 

@@ -2,7 +2,7 @@
 use super::*;
 
 // This independent agent speaks JSON-RPC directly; it is not a Tauri binary.
-const FAKE: &str = r#"
+pub(crate) const FAKE: &str = r#"
 import json, os, subprocess, sys, time
 scenario = sys.argv[1]
 if scenario == 'group':
@@ -29,6 +29,7 @@ client_caps = {}
 session_counter = 0
 selected_mode = None
 selected_model = None
+call_order = []
 session_prompts = {}
 permission_sessions = {}
 permission_prompts = {}
@@ -38,15 +39,14 @@ for line in sys.stdin:
     method = msg.get('method')
     if method == 'initialize':
         client_caps = msg.get('params', {}).get('clientCapabilities', {})
-        if scenario == 'timeout': time.sleep(5); continue
-        if scenario == 'noise': print('not json', flush=True)
-        methods = [{'id':'login','name':'Login'}] if scenario == 'auth_required' else []
+        if scenario in ('timeout', 'probe_timeout_scenario'): time.sleep(5); continue
+        methods = [{'id':'login','name':'Login'}] if scenario in ('auth_required', 'probe_auth') else []
         reply(msg['id'], {'protocolVersion':1,'agentCapabilities':{},'authMethods':methods})
     elif method == 'session/new':
         cwd = msg['params']['cwd']
         session_counter += 1
         sess_id = f'session-{session_counter}'
-        if scenario in ('auth_required', 'auth_unadvertised'):
+        if scenario in ('auth_required', 'auth_unadvertised', 'probe_auth'):
             send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32000,'message':'Authentication required'}})
             continue
         res = {'sessionId': sess_id}
@@ -68,7 +68,21 @@ for line in sys.stdin:
                     {'id': 'custom', 'name': 'Custom'}
                 ]
             }
-        if session_counter > 1 or scenario.startswith('title_') or scenario == 'models':
+        if scenario == 'probe_grouped':
+            res['configOptions'] = [{
+                'id': 'model-select',
+                'name': 'Model',
+                'category': 'model',
+                'type': 'select',
+                'currentValue': 'g2-m1',
+                'options': [
+                    {'group': 'g1', 'name': 'Group 1', 'options': [{'value': 'g1-m1', 'name': 'Model G1'}]},
+                    {'group': 'g2', 'name': 'Group 2', 'options': [{'value': 'g2-m1', 'name': 'Model G2'}]}
+                ]
+            }]
+        elif scenario == 'probe_unadvertised':
+            res['configOptions'] = []
+        elif session_counter > 1 or scenario.startswith('title_') or scenario in ('models', 'model_apply', 'model_inspect', 'model_update', 'probe_ready', 'probe_timeout_scenario', 'probe_flight'):
             res['configOptions'] = [{
                 'id': 'model-select',
                 'name': 'Model',
@@ -87,10 +101,29 @@ for line in sys.stdin:
         selected_mode = msg.get('params', {}).get('modeId')
         reply(msg['id'], {})
     elif method == 'session/set_config_option':
+        call_order.append('set_config_option')
         val = msg.get('params', {}).get('value')
+        if isinstance(val, dict):
+            val = val.get('value', val)
         selected_model = val
         reply(msg['id'], {'configOptions': []})
+        if scenario == 'model_update':
+            update(sess_id, {
+                'sessionUpdate': 'config_option_update',
+                'configOptions': [{
+                    'id': 'model-select',
+                    'name': 'Model',
+                    'category': 'model',
+                    'type': 'select',
+                    'currentValue': 'updated-model',
+                    'options': [
+                        {'value': 'claude-3-5-haiku-latest', 'name': 'Claude 3.5 Haiku'},
+                        {'value': 'updated-model', 'name': 'Updated Model'}
+                    ]
+                }]
+            })
     elif method == 'session/prompt':
+        call_order.append('prompt')
         prompt_id = msg['id']
         prompt_session = msg.get('params', {}).get('sessionId', 'session-1')
         session_prompts[prompt_session] = prompt_id
@@ -106,7 +139,7 @@ for line in sys.stdin:
             reply(prompt_id, {'stopReason':'end_turn'})
             continue
         turn += 1
-        if scenario == 'multi_turn':
+        if scenario in ('multi_turn', 'models'):
             update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps({'turn': turn, 'channel': prompt_session, 'prompt': prompt_text})}})
             reply(prompt_id, {'stopReason':'end_turn'})
             continue
@@ -114,8 +147,12 @@ for line in sys.stdin:
             update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':prompt_text}})
             reply(prompt_id, {'stopReason':'end_turn'})
             continue
-        if scenario == 'inspect':
-            update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps({'cwd':cwd,'prompt':prompt_text})}})
+        if scenario in ('inspect', 'multi_turn_inspect'):
+            update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps({'cwd':cwd,'prompt':prompt_text,'turn':turn})}})
+            reply(prompt_id, {'stopReason':'end_turn'})
+            continue
+        if scenario == 'model_inspect':
+            update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps({'selected_model': selected_model, 'call_order': call_order})}})
             reply(prompt_id, {'stopReason':'end_turn'})
             continue
         if scenario == 'capabilities':
@@ -175,11 +212,11 @@ fn setup() -> (Runner, i64, Arc<TaskControl>, watch::Receiver<bool>, PlanTask) {
         stop,
     });
     runner.registry.lock().unwrap().running.insert((session, "task".into()), control.clone());
-    let task = PlanTask { id: "task".into(), title: "Do the task".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "running".into() };
+    let task = PlanTask { id: "task".into(), title: "Do the task".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "running".into() };
     (runner, session, control, receiver, task)
 }
 
-fn launch(scenario: &str) -> agent::LaunchSpec {
+pub(crate) fn launch(scenario: &str) -> agent::LaunchSpec {
     agent::LaunchSpec { program: PathBuf::from("python3"), args: vec!["-u".into(), "-c".into(), FAKE.into(), scenario.into()] }
 }
 
@@ -350,7 +387,7 @@ fn real_agent_omp_smoke() {
         let session_id = store.create_session("active").unwrap();
         store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![repo.to_string_lossy().to_string(), session_id]).unwrap();
         let runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
-        let task = PlanTask { id: "task-1".into(), title: "Reply with OK without making changes".into(), team: "".into(), harness: "omp".into(), worktree: true, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+        let task = PlanTask { id: "task-1".into(), title: "Reply with OK without making changes".into(), team: "".into(), harness: "omp".into(), model: None, worktree: true, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
         let plan = session::propose(&store, session_id, vec![task]).unwrap();
         session::approve(&store, session_id, plan.revision).unwrap();
         assert_eq!(runner.start(session_id).unwrap(), ["task-1"]);
@@ -461,6 +498,9 @@ fn worktree_cwd_and_prompt_are_the_agent_received_values() {
         }
         let (runner, session_id, control, stop, mut task) = setup();
         task.worktree = true;
+        task.files = vec!["src/lib.rs".into()];
+        session::propose(&runner.store, session_id, vec![task.clone()]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
         let worker = runner.clone();
         let root_str = root.to_str().unwrap().to_string();
         let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task, &root_str, control, stop, launch("inspect"), Duration::from_secs(5)).await });
@@ -471,9 +511,9 @@ fn worktree_cwd_and_prompt_are_the_agent_received_values() {
         assert_eq!(received["cwd"], handoff.payload["handoff"]["worktree_path"]);
         assert!(std::path::Path::new(received["cwd"].as_str().unwrap()).is_absolute());
         let prompt = received["prompt"].as_str().unwrap();
-        assert!(prompt.contains("Do the task"));
-        assert!(!prompt.contains("None"));
-        assert!(!prompt.contains("Files:"));
+        assert!(prompt.starts_with("Goal: Do the task\n"));
+        assert!(prompt.contains("Files:\n- src/lib.rs"));
+        assert!(prompt.contains("Worktree:"));
         assert!(events.iter().all(|event| event.kind != "usage"));
         let path = handoff.payload["handoff"]["worktree_path"].as_str().unwrap();
         runner.stop(session_id, "task").unwrap();
@@ -946,7 +986,7 @@ fn title_model_selection_per_harness_with_fallback() {
                 *cap.lock().unwrap() = Some(title.to_string());
             }));
             runner.launch = Arc::new(|_| Some(launch("models")));
-            let task = PlanTask { id: "task".into(), title: "Write an algorithm".into(), team: "".into(), harness: harness.into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+            let task = PlanTask { id: "task".into(), title: "Write an algorithm".into(), team: "".into(), harness: harness.into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
             session::propose(&runner.store, session_id, vec![task]).unwrap();
             session::approve(&runner.store, session_id, 1).unwrap();
             runner.start(session_id).unwrap();
@@ -998,7 +1038,7 @@ fn typed_title_not_overwritten_by_generated_title() {
         let session = store.create_named_session("User Typed Title", proj.id, &root, false).unwrap();
         let mut runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
         runner.launch = Arc::new(|_| Some(launch("models")));
-        let task = PlanTask { id: "task".into(), title: "Do work".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+        let task = PlanTask { id: "task".into(), title: "Do work".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
         session::propose(&runner.store, session.id, vec![task]).unwrap();
         session::approve(&runner.store, session.id, 1).unwrap();
         runner.start(session.id).unwrap();
@@ -1024,7 +1064,7 @@ fn failed_or_timed_out_title_keeps_truncated_first_message() {
         let session = store.create_named_session("New session", proj.id, &root, false).unwrap();
         let mut runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
         runner.launch = Arc::new(|_| Some(launch("title_fail")));
-        let task = PlanTask { id: "task".into(), title: "Investigate and solve the issue with concurrency in runner".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+        let task = PlanTask { id: "task".into(), title: "Investigate and solve the issue with concurrency in runner".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
         session::propose(&runner.store, session.id, vec![task]).unwrap();
         session::approve(&runner.store, session.id, 1).unwrap();
         runner.start(session.id).unwrap();
@@ -1112,7 +1152,7 @@ fn recover_marks_orphaned_review_tasks_interrupted() {
     let store = Store::open(":memory:").unwrap();
     let session_id = store.create_session("active").unwrap();
     let runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
-    let task = PlanTask { id: "task-r".into(), title: "Review task".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+    let task = PlanTask { id: "task-r".into(), title: "Review task".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
     session::propose(&store, session_id, vec![task]).unwrap();
     session::approve(&store, session_id, 1).unwrap();
     session::transition(&store, session_id, "task-r", "running").unwrap();
@@ -1171,10 +1211,354 @@ fn session_transition_allows_review_to_running() {
     // [ADR-0018.D2] Task transition must allow review -> running for a subsequent turn
     let store = Store::open(":memory:").unwrap();
     let session = store.create_session("active").unwrap();
-    let task = PlanTask { id: "task-1".into(), title: "Work".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+    let task = PlanTask { id: "task-1".into(), title: "Work".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
     session::propose(&store, session, vec![task]).unwrap();
     session::approve(&store, session, 1).unwrap();
     session::transition(&store, session, "task-1", "running").unwrap();
     session::transition(&store, session, "task-1", "review").unwrap();
     assert_eq!(session::transition(&store, session, "task-1", "running").unwrap().tasks[0].status, "running");
+}
+
+#[test]
+fn adr0020_single_task_chat_message_reaches_agent_unchanged() {
+    // [ADR-0020.D1] a single-task chat message reaches the agent exactly as typed
+    tauri::async_runtime::block_on(async {
+        let (runner, session_id, control, stop, task) = setup();
+        let prompt_raw = "Hello assistant, how are you?";
+        let mut task = task;
+        task.title = prompt_raw.into();
+        task.files = vec![];
+        session::propose(&runner.store, session_id, vec![task.clone()]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        let worker = runner.clone();
+        let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task, &cwd, control, stop, launch("inspect"), Duration::from_secs(5)).await });
+        let events = wait_for(&runner.store, session_id, "agent_message", 1).await;
+        let received_text = events.iter().find(|e| e.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(received_text).unwrap();
+        assert_eq!(parsed["prompt"], prompt_raw);
+        runner.stop(session_id, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
+    });
+}
+
+#[test]
+fn adr0020_multi_task_and_task_with_files_keep_wrapper() {
+    // [ADR-0020.D1] a two-task plan and a task with files keep the Goal/Files/Worktree wrapper
+    tauri::async_runtime::block_on(async {
+        // Case 1: Multi-task plan (2 tasks) without files still uses wrapper
+        {
+            let (runner, session_id, control, stop, task1) = setup();
+            let task2 = PlanTask { id: "task2".into(), title: "Second".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+            session::propose(&runner.store, session_id, vec![task1.clone(), task2]).unwrap();
+            session::approve(&runner.store, session_id, 1).unwrap();
+            let worker = runner.clone();
+            let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+            let task1_run = task1.clone();
+            let cwd_run = cwd.clone();
+            let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task1_run, &cwd_run, control, stop, launch("inspect"), Duration::from_secs(5)).await });
+            let events = wait_for(&runner.store, session_id, "agent_message", 1).await;
+            let received = events.iter().find(|e| e.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(received).unwrap();
+            let prompt = parsed["prompt"].as_str().unwrap();
+            assert!(prompt.starts_with(&format!("Goal: {}\n", task1.title)));
+            let expected_cwd = std::path::Path::new(&cwd).canonicalize().unwrap();
+            assert!(prompt.contains(&format!("Worktree: {}", expected_cwd.display())));
+            runner.stop(session_id, "task").unwrap();
+            assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
+        }
+        // Case 2: Single-task plan but with files keeps wrapper
+        {
+            let (runner, session_id, control, stop, mut task) = setup();
+            task.files = vec!["README.md".into()];
+            session::propose(&runner.store, session_id, vec![task.clone()]).unwrap();
+            session::approve(&runner.store, session_id, 1).unwrap();
+            let worker = runner.clone();
+            let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+            let task_run = task.clone();
+            let cwd_run = cwd.clone();
+            let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task_run, &cwd_run, control, stop, launch("inspect"), Duration::from_secs(5)).await });
+            let events = wait_for(&runner.store, session_id, "agent_message", 1).await;
+            let received = events.iter().find(|e| e.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(received).unwrap();
+            let prompt = parsed["prompt"].as_str().unwrap();
+            assert!(prompt.starts_with(&format!("Goal: {}\n", task.title)));
+            assert!(prompt.contains("Files:\n- README.md"));
+            let expected_cwd = std::path::Path::new(&cwd).canonicalize().unwrap();
+            assert!(prompt.contains(&format!("Worktree: {}", expected_cwd.display())));
+            runner.stop(session_id, "task").unwrap();
+            assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
+        }
+    });
+}
+
+#[test]
+fn adr0020_concise_replies_prepends_instruction_and_toggling_applies_dynamically() {
+    // [ADR-0020.D2] with the setting on the agent receives the line plus blank line plus text, for the first prompt and for a follow-up
+    // [ADR-0020.D2] toggling off stops it
+    // [ADR-0020.D2] the user_message event contains only the typed text
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, task) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        runner.store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id]).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("multi_turn_inspect")));
+
+        // Enable concise replies
+        runner.store.set_session_concise(session_id, true).unwrap();
+        assert!(runner.store.session_concise(session_id).unwrap());
+
+        let mut task = task;
+        task.title = "First question".into();
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        assert_eq!(runner.start(session_id).unwrap(), ["task"]);
+
+        // Wait for first turn to hit review
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            if runner.plan(session_id).unwrap().unwrap().tasks[0].status == "review" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        let user_msgs: Vec<_> = events.iter().filter(|e| e.kind == "user_message").collect();
+        assert_eq!(user_msgs.len(), 1);
+        // [ADR-0020.D2] the user_message event contains only the typed text
+        assert_eq!(user_msgs[0].payload["text"], "First question");
+
+        let agent_msg1 = events.iter().find(|e| e.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
+        let parsed1: serde_json::Value = serde_json::from_str(agent_msg1).unwrap();
+        let prompt1 = parsed1["prompt"].as_str().unwrap();
+        // [ADR-0020.D2] agent receives instruction line plus blank line plus text on first prompt
+        assert_eq!(prompt1, "Keep replies short and direct. Do not describe the repository or your tools unless asked.\n\nFirst question");
+
+        // Send follow-up while concise is still on
+        runner.send(session_id, "task", "Second question".into()).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let events = runner.store.events(session_id, 0, 1000).unwrap();
+            if events.iter().filter(|e| e.kind == "agent_message").count() >= 2 {
+                let plan = runner.plan(session_id).unwrap().unwrap();
+                if plan.tasks[0].status == "review" { break; }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        let user_msgs: Vec<_> = events.iter().filter(|e| e.kind == "user_message").collect();
+        assert_eq!(user_msgs.len(), 2);
+        assert_eq!(user_msgs[1].payload["text"], "Second question");
+
+        let agent_msgs: Vec<_> = events.iter().filter(|e| e.kind == "agent_message").collect();
+        let parsed2: serde_json::Value = serde_json::from_str(agent_msgs[1].payload["text"].as_str().unwrap()).unwrap();
+        let prompt2 = parsed2["prompt"].as_str().unwrap();
+        // [ADR-0020.D2] follow up prompt also receives instruction line
+        assert_eq!(prompt2, "Keep replies short and direct. Do not describe the repository or your tools unless asked.\n\nSecond question");
+
+        // Now toggle concise replies OFF dynamically mid-session
+        runner.store.set_session_concise(session_id, false).unwrap();
+        assert!(!runner.store.session_concise(session_id).unwrap());
+
+        // Send third question
+        runner.send(session_id, "task", "Third question".into()).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let events = runner.store.events(session_id, 0, 1000).unwrap();
+            if events.iter().filter(|e| e.kind == "agent_message").count() >= 3 {
+                let plan = runner.plan(session_id).unwrap().unwrap();
+                if plan.tasks[0].status == "review" { break; }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        let user_msgs: Vec<_> = events.iter().filter(|e| e.kind == "user_message").collect();
+        assert_eq!(user_msgs.len(), 3);
+        assert_eq!(user_msgs[2].payload["text"], "Third question");
+
+        let agent_msgs: Vec<_> = events.iter().filter(|e| e.kind == "agent_message").collect();
+        let parsed3: serde_json::Value = serde_json::from_str(agent_msgs[2].payload["text"].as_str().unwrap()).unwrap();
+        let prompt3 = parsed3["prompt"].as_str().unwrap();
+        // [ADR-0020.D2] toggling off stops it
+        assert_eq!(prompt3, "Third question");
+
+        runner.shutdown();
+    });
+}
+
+// [ADR-0021.D2] Selected model is applied with set_config_option before the first prompt.
+#[test]
+fn adr0021_model_applied_before_first_prompt() {
+    tauri::async_runtime::block_on(async {
+        let (runner, session_id, control, stop, mut task) = setup();
+        task.model = Some("gpt-4o".into());
+        let worker = runner.clone();
+        let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        let task_clone = task.clone();
+        let handle = tauri::async_runtime::spawn(async move {
+            worker.execute(session_id, &task_clone, &cwd, control, stop, launch("model_inspect"), Duration::from_secs(5)).await
+        });
+
+        let events = wait_for(&runner.store, session_id, "agent_message", 1).await;
+        let msg = events.iter().find(|e| e.kind == "agent_message").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(msg.payload["text"].as_str().unwrap()).unwrap();
+        assert_eq!(parsed["selected_model"], "gpt-4o");
+        let order: Vec<&str> = parsed["call_order"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(order, vec!["set_config_option", "prompt"]);
+
+        runner.stop(session_id, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
+    });
+}
+
+// [ADR-0021.D2] Unadvertised or unknown desired model leaves default active and logs agent_log.
+#[test]
+fn adr0021_unadvertised_or_unknown_desired_model_leaves_default_and_logs() {
+    tauri::async_runtime::block_on(async {
+        let (runner, session_id, control, stop, mut task) = setup();
+        task.model = Some("nonexistent-model-xyz".into());
+        let worker = runner.clone();
+        let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        let task_clone = task.clone();
+        let handle = tauri::async_runtime::spawn(async move {
+            worker.execute(session_id, &task_clone, &cwd, control, stop, launch("model_inspect"), Duration::from_secs(5)).await
+        });
+
+        let events = wait_for(&runner.store, session_id, "agent_message", 1).await;
+        let msg = events.iter().find(|e| e.kind == "agent_message").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(msg.payload["text"].as_str().unwrap()).unwrap();
+        // The agent never received a set_config_option call for nonexistent-model-xyz
+        assert_eq!(parsed["selected_model"], serde_json::Value::Null);
+        let all_events = runner.store.events(session_id, 0, 1000).unwrap();
+        assert!(all_events.iter().any(|e| e.kind == "agent_log" && e.payload["text"].as_str().unwrap().contains("Desired model nonexistent-model-xyz is not available")));
+
+        runner.stop(session_id, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
+    });
+}
+
+// [ADR-0021.D2] runner_set_model rejects unadvertised ids and updates sessions.model + emits session_model_changed.
+#[test]
+fn adr0021_runner_set_model_validates_and_updates_and_emits_event() {
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, mut task) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        task.status = "queued".into();
+        runner.store.connection().unwrap().execute(
+            "UPDATE sessions SET workspace_path = ?1 WHERE id = ?2",
+            rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id],
+        ).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("models")));
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        runner.start(session_id).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let plan = runner.plan(session_id).unwrap().unwrap();
+            if plan.tasks[0].status == "review" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        // Setting an invalid model must fail
+        let err = runner.set_model(session_id, "task", "invalid-id-xyz").await;
+        assert!(err.is_err(), "expected error for unadvertised model");
+
+        // Setting an advertised model must succeed, update sessions.model, and emit session_model_changed
+        runner.set_model(session_id, "task", "claude-3-5-haiku-latest").await.unwrap();
+        assert_eq!(runner.store.session_model(session_id).unwrap(), Some("claude-3-5-haiku-latest".into()));
+
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        assert!(events.iter().any(|e| e.kind == "session_model_changed" && e.payload["current"] == "claude-3-5-haiku-latest"));
+
+        runner.shutdown();
+    });
+}
+
+// [ADR-0021.D2] Title session selection is unaffected by sessions.model.
+#[test]
+fn adr0021_title_session_unaffected_by_sessions_model() {
+    tauri::async_runtime::block_on(async {
+        let captured_title = Arc::new(Mutex::new(None));
+        let cap = captured_title.clone();
+        let store = Store::open(":memory:").unwrap();
+        let session_id = store.create_session("active").unwrap();
+        // Persist a user chat model in the session
+        store.set_session_model(session_id, Some("gpt-4o")).unwrap();
+        store.connection().unwrap().execute(
+            "UPDATE sessions SET workspace_path = ?1 WHERE id = ?2",
+            rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id],
+        ).unwrap();
+
+        let mut runner = Runner::with_emitters(store.clone(), Arc::new(|_, _| {}), Arc::new(move |_, title| {
+            *cap.lock().unwrap() = Some(title.to_string());
+        }));
+        runner.launch = Arc::new(|_| Some(launch("models")));
+        let task = PlanTask {
+            id: "task".into(),
+            title: "Write an algorithm".into(),
+            team: "".into(),
+            harness: "claude-code".into(),
+            model: Some("gpt-4o".into()),
+            worktree: false,
+            files: vec![],
+            dependencies: vec![],
+            estimated_tokens: None,
+            status: "queued".into(),
+        };
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        runner.start(session_id).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            if captured_title.lock().unwrap().is_some() { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        let title = captured_title.lock().unwrap().clone().unwrap();
+        // For claude-code harness, title session must still pick haiku, not gpt-4o from sessions.model
+        assert!(title.contains("claude-3-5-haiku-latest"), "title should have haiku, got {title}");
+        assert_eq!(runner.store.session_model(session_id).unwrap(), Some("gpt-4o".into()));
+        let control = runner.control(session_id, "task").unwrap();
+        let main_model = control.active_session.lock().unwrap().as_ref().and_then(|a| a.current_model.clone());
+        assert_eq!(main_model, Some("gpt-4o".into()));
+        runner.shutdown();
+    });
+}
+
+// [ADR-0021.D2] ConfigOptionUpdate arriving during set_config_option updates ActiveSession and yields single event.
+#[test]
+fn adr0021_config_option_update_during_set_model_deduplicates_event() {
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, mut task) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        task.status = "queued".into();
+        runner.store.connection().unwrap().execute(
+            "UPDATE sessions SET workspace_path = ?1 WHERE id = ?2",
+            rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id],
+        ).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("model_update")));
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        runner.start(session_id).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let plan = runner.plan(session_id).unwrap().unwrap();
+            if plan.tasks[0].status == "review" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        runner.set_model(session_id, "task", "claude-3-5-haiku-latest").await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        // ActiveSession should reflect updated model from ConfigOptionUpdate
+        let control = runner.control(session_id, "task").unwrap();
+        let current_active = control.active_session.lock().unwrap().as_ref().and_then(|a| a.current_model.clone());
+        assert_eq!(current_active, Some("updated-model".into()));
+
+        // session_model_changed events for updated-model should be emitted exactly once
+        let change_events: Vec<_> = events.iter().filter(|e| e.kind == "session_model_changed" && e.payload["current"] == "updated-model").collect();
+        assert_eq!(change_events.len(), 1);
+
+        runner.shutdown();
+    });
 }

@@ -53,6 +53,45 @@ fn version_one_database_upgrades_to_latest_schema() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// [ADR-0021.D2] Migration v7 preserves existing session rows and default model is null.
+#[test]
+fn version_six_database_upgrades_to_v7_preserving_rows() {
+    let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let root = std::env::temp_dir().join(format!("bentobox-db-v7-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("db.sqlite");
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (id INTEGER PRIMARY KEY, state TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', workspace_path TEXT NOT NULL DEFAULT '', opt_in_worktree INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '', project_id INTEGER, concise_replies INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE tasks (id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL REFERENCES sessions(id), title TEXT NOT NULL, state TEXT NOT NULL, UNIQUE(id, session_id));
+             CREATE TABLE task_dependencies (session_id INTEGER NOT NULL, task_id INTEGER NOT NULL, depends_on_id INTEGER NOT NULL, PRIMARY KEY(task_id, depends_on_id));
+             CREATE TABLE events (id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL REFERENCES sessions(id), task_id INTEGER, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
+             CREATE TABLE capability_cache (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE session_plans (session_id INTEGER PRIMARY KEY REFERENCES sessions(id), plan TEXT NOT NULL);
+             CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL, root_path TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
+             CREATE TABLE settings (key TEXT PRIMARY KEY, value_type TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
+             CREATE TABLE session_title_state (session_id INTEGER PRIMARY KEY REFERENCES sessions(id), custom INTEGER NOT NULL DEFAULT 0);
+             PRAGMA user_version = 6;
+             INSERT INTO sessions (id, state, title, workspace_path, opt_in_worktree, created_at, concise_replies) VALUES (42, 'active', 'Existing', '/tmp', 0, '2026-01-01', 1);"
+        ).unwrap();
+    }
+    {
+        let store = Store::open(&path).unwrap();
+        let conn = store.connection().unwrap();
+        assert_eq!(conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 7);
+        let (title, concise, model): (String, bool, Option<String>) = conn.query_row(
+            "SELECT title, concise_replies = 1, model FROM sessions WHERE id = 42",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(title, "Existing");
+        assert!(concise);
+        assert_eq!(model, None);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // [ADR-0010.D1] Frontend event injection cannot forge authoritative usage records.
 #[test]
 fn frontend_cannot_append_reserved_session_usage() {

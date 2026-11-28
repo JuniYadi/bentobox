@@ -25,15 +25,15 @@ describe("[ADR-0016.D2] project session tree", () => {
     expect(render(true)).toContain("Unassigned");
     expect(render(true)).toContain("Orphan");
     expect(render()).toContain("text-warning");
-    expect(render()).toContain("size-1.75");
+    expect(render()).toContain("size-2");
   });
 
   test("renders status tokens on frame-sized glyphs", () => {
     const items = [session, { ...session, id: 8, phase: null, taskStatuses: ["failed"] }, { ...session, id: 9, phase: null, taskStatuses: ["running"] }, { ...session, id: 10, phase: null }, { ...session, id: 11, state: "closed" as const }];
     const html = renderToStaticMarkup(<TooltipProvider><SidebarProvider><ProjectTree projects={[project]} sessionsByProject={{ 1: items }} activeSessionId={null} filter="" loading={false} expanded={{}} onAddProject={() => {}} onToggleProject={() => {}} onSelectSession={() => {}} onCreateSession={() => {}} /></SidebarProvider></TooltipProvider>);
-    expect(html).toContain('aria-label="needs-approval" class="size-1.75 rounded-full bg-current text-warning"');
-    expect(html).toContain('aria-label="failed" class="size-1.75 rounded-full bg-current text-danger"');
-    expect(html).toContain('aria-label="running" class="size-1.75 rounded-full bg-current text-muted-foreground"');
+    expect(html).toContain('aria-label="needs-approval" class="size-2 rounded-full bg-current text-warning"');
+    expect(html).toContain('aria-label="failed" class="size-2 rounded-full bg-current text-danger"');
+    expect(html).toContain('aria-label="running" class="size-2 rounded-full bg-current text-muted-foreground"');
     expect(html).toContain('aria-label="idle" class="size-2 rounded-full border border-current text-muted-foreground"');
     expect(html).toContain('aria-label="done"');
     expect(html).toContain("text-success");
