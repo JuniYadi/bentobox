@@ -8,6 +8,7 @@ pub mod usage;
 pub mod handoff;
 pub mod session;
 pub mod settings;
+pub mod runner;
 
 pub mod project;
 #[tauri::command]
@@ -23,6 +24,9 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             let store =
                 db::Store::open(data_dir.join("bentobox.sqlite")).map_err(std::io::Error::other)?;
+            let runner = runner::Runner::new(store.clone(), app.handle().clone());
+            runner.recover().map_err(std::io::Error::other)?;
+            app.manage(runner);
             app.manage(store);
             Ok(())
         })
@@ -60,6 +64,10 @@ pub fn run() {
             session::session_create,
             session::session_list,
             session::session_set_worktree,
+            runner::runner_start,
+            runner::runner_stop,
+            runner::runner_respond_permission,
+            runner::runner_steer,
             db::db_append_event,
             db::db_events,
             db::db_set_capability,
@@ -68,6 +76,11 @@ pub fn run() {
             usage::get_account_quota,
             db::db_capability
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<runner::Runner>().shutdown();
+            }
+        });
 }

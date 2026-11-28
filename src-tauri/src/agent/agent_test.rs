@@ -27,7 +27,7 @@ fn registry_lookup_is_exact() {
     // [ADR-0001.D1]
     let codex = CapabilityRegistry::get("codex").unwrap().capabilities();
     assert_eq!(codex.harness_id, "codex");
-    assert_eq!(codex.transport, TransportKind::NativeProcess);
+    assert_eq!(codex.transport, TransportKind::Acp);
     assert_eq!(
         CapabilityRegistry::get("opencode")
             .unwrap()
@@ -79,7 +79,35 @@ fn detection_uses_injected_path_and_executable_permissions() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].capabilities.harness_id, "codex");
     assert_eq!(found[0].executable_path, executable);
+    assert!(!found[0].runnable);
+    assert!(found[0].launch_note.is_some());
     assert!(CapabilityRegistry::detect(first.0.as_os_str()).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn launch_specs_require_installed_executables_and_adapter_runtime() {
+    // [ADR-0001.D1] Launch specifications reflect available executables.
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TestDir::new();
+    for name in ["omp", "opencode", "claude", "codex", "pi"] {
+        let file = dir.0.join(name);
+        std::fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = dir.0.as_os_str();
+    assert_eq!(launch_spec("omp", path).unwrap().args, ["acp"]);
+    assert_eq!(launch_spec("opencode", path).unwrap().args, ["acp"]);
+    assert!(launch_spec("pi", path).is_none());
+    assert!(launch_spec("codex", path).is_none());
+    let npx = dir.0.join("npx");
+    std::fs::write(&npx, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&npx, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for (id, package) in [("claude", "@agentclientprotocol/claude-agent-acp"), ("codex", "@agentclientprotocol/codex-acp")] {
+        let spec = launch_spec(id, path).unwrap();
+        assert_eq!(spec.program, npx);
+        assert_eq!(spec.args, ["-y", package]);
+    }
 }
 #[cfg(unix)]
 #[test]

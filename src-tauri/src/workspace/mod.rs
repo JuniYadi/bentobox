@@ -102,7 +102,7 @@ fn list_all(repo: &Path) -> Result<Vec<Worktree>, String> {
     Ok(result)
 }
 
-fn create(repo: &Path, task_id: &str, base_branch: &str, enabled: bool) -> Result<Option<CreateWorktreeResult>, String> {
+pub(crate) fn create(repo: &Path, task_id: &str, base_branch: &str, enabled: bool) -> Result<Option<CreateWorktreeResult>, String> {
     if !enabled { return Ok(None); }
     validate_task_id(task_id)?;
     validate_branch(base_branch)?;

@@ -56,6 +56,8 @@ pub struct CapabilityDescriptor {
 pub struct DetectedHarness {
     pub capabilities: CapabilityDescriptor,
     pub executable_path: PathBuf,
+    pub runnable: bool,
+    pub launch_note: Option<String>,
 }
 
 /// Transport adapters declare their integration without manufacturing protocol events.
@@ -66,9 +68,15 @@ pub trait AgentAdapter {
         let mut capabilities = self.capabilities();
         find_executable(&capabilities.executable, path).map(|executable_path| {
             capabilities.binary_version = probe_version(&executable_path);
+            let adapter = matches!(capabilities.harness_id.as_str(), "claude" | "codex");
+            let runnable = capabilities.transport == TransportKind::Acp
+                && (!adapter || find_executable("npx", path).is_some());
+            let launch_note = adapter.then(|| "Downloads the adapter with npx on first use".to_string());
             DetectedHarness {
                 capabilities,
                 executable_path,
+                runnable,
+                launch_note,
             }
         })
     }
@@ -110,22 +118,22 @@ static ADAPTERS: &[DeclaredAdapter] = &[
         id: "claude",
         name: "Claude Code",
         executable: "claude",
-        transport: TransportKind::NativeProcess,
-        transport_args: &[],
+        transport: TransportKind::Acp,
+        transport_args: &["-y", "@agentclientprotocol/claude-agent-acp"],
     },
     DeclaredAdapter {
         id: "codex",
         name: "OpenAI Codex",
         executable: "codex",
-        transport: TransportKind::NativeProcess,
-        transport_args: &[],
+        transport: TransportKind::Acp,
+        transport_args: &["-y", "@agentclientprotocol/codex-acp"],
     },
     DeclaredAdapter {
         id: "omp",
         name: "Oh My Pi",
         executable: "omp",
-        transport: TransportKind::NativeProcess,
-        transport_args: &[],
+        transport: TransportKind::Acp,
+        transport_args: &["acp"],
     },
     DeclaredAdapter {
         id: "pi",
@@ -165,6 +173,29 @@ impl CapabilityRegistry {
                 .collect()
         })
     }
+}
+
+/// @adr ADR-0001.D1
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchSpec {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+}
+
+/// @adr ADR-0001.D1
+pub fn launch_spec(harness_id: &str, path: &OsStr) -> Option<LaunchSpec> {
+    let adapter = ADAPTERS.iter().find(|adapter| adapter.id == harness_id)?;
+    if adapter.transport != TransportKind::Acp { return None; }
+    let executable = find_executable(adapter.executable, path)?;
+    let program = if matches!(harness_id, "claude" | "codex") {
+        find_executable("npx", path)?
+    } else {
+        executable
+    };
+    Some(LaunchSpec {
+        program,
+        args: adapter.transport_args.iter().map(|arg| (*arg).to_owned()).collect(),
+    })
 }
 
 fn find_executable(name: &str, path: &OsStr) -> Option<PathBuf> {
