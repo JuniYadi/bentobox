@@ -26,7 +26,7 @@ fn roundtrip() {
     assert_eq!(values.get("test.string"), Some(&json!("second")));
 }
 
-// [ADR-0016.D5] Unknown keys are rejected, including by the empty production registry.
+// [ADR-0016.D5] Unknown keys are rejected by both registries.
 #[test]
 fn rejects_unknown_key() {
     let store = Store::open(":memory:").unwrap();
@@ -69,18 +69,33 @@ fn migrates_v3() {
     {
         let store = Store::open(&path).unwrap();
         let conn = store.connection().unwrap();
-        conn.execute_batch("CREATE TABLE sentinel (value TEXT NOT NULL); INSERT INTO sentinel VALUES ('kept'); ALTER TABLE sessions DROP COLUMN concise_replies; ALTER TABLE sessions DROP COLUMN model; DROP TABLE settings; PRAGMA user_version = 3;").unwrap();
+        conn.execute_batch("CREATE TABLE sentinel (value TEXT NOT NULL); INSERT INTO sentinel VALUES ('kept'); DROP TABLE team_steps; DROP TABLE teams; ALTER TABLE sessions DROP COLUMN team; ALTER TABLE sessions DROP COLUMN concise_replies; ALTER TABLE sessions DROP COLUMN model; DROP TABLE settings; PRAGMA user_version = 3;").unwrap();
     }
     {
         let store = Store::open(&path).unwrap();
         let conn = store.connection().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
         let sentinel: String = conn.query_row("SELECT value FROM sentinel", [], |row| row.get(0)).unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         assert_eq!(sentinel, "kept");
         drop(conn);
         store.setting_set_with(TEST_REGISTRY, "test.boolean", &json!(true)).unwrap();
         assert_eq!(store.setting_get_with(TEST_REGISTRY, "test.boolean").unwrap(), Some(json!(true)));
     }
     std::fs::remove_dir_all(root).unwrap();
+}
+
+// [ADR-0012.D1] Routing preferences accept only their documented string values.
+#[test]
+fn routing_settings_validate_values() {
+    let store = Store::open(":memory:").unwrap();
+    for (key, values) in [("routing.default_effort", &["low", "medium", "high"][..]), ("routing.unavailable_action", &["ask", "fallback"][..])] {
+        for value in values {
+            store.setting_set_with(REGISTRY, key, &json!(value)).unwrap();
+            assert_eq!(store.setting_get_with(REGISTRY, key).unwrap(), Some(json!(value)));
+        }
+        for invalid in [json!("invalid"), json!(""), json!(true), json!(null)] {
+            assert!(store.setting_set_with(REGISTRY, key, &invalid).is_err());
+        }
+    }
 }

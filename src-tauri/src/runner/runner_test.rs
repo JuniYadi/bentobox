@@ -82,7 +82,7 @@ for line in sys.stdin:
             }]
         elif scenario == 'probe_unadvertised':
             res['configOptions'] = []
-        elif session_counter > 1 or scenario.startswith('title_') or scenario in ('models', 'model_apply', 'model_inspect', 'model_update', 'probe_ready', 'probe_timeout_scenario', 'probe_flight'):
+        elif session_counter > 1 or scenario.startswith('title_') or scenario in ('models', 'model_apply', 'model_inspect', 'model_update', 'team_model_crash', 'probe_ready', 'probe_timeout_scenario', 'probe_flight'):
             res['configOptions'] = [{
                 'id': 'model-select',
                 'name': 'Model',
@@ -162,6 +162,9 @@ for line in sys.stdin:
             term_val = str(client_caps.get('terminal'))
             send({'jsonrpc':'2.0','id':prompt_id,'error':{'code':-32000,'message':f'CAPS terminal={term_val} read={read_val} write={write_val}'}})
             continue
+        if scenario == 'team_model_crash':
+            update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps({'selected_model':selected_model})}})
+            sys.exit(7)
         if scenario == 'crash': sys.exit(7)
         if scenario in ('max_tokens', 'max_turn_requests', 'refusal'):
             reply(prompt_id, {'stopReason':scenario})
@@ -212,7 +215,7 @@ fn setup() -> (Runner, i64, Arc<TaskControl>, watch::Receiver<bool>, PlanTask) {
         stop,
     });
     runner.registry.lock().unwrap().running.insert((session, "task".into()), control.clone());
-    let task = PlanTask { id: "task".into(), title: "Do the task".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "running".into() };
+    let task = PlanTask { id: "task".into(), title: "Do the task".into(), team: "".into(), pinned: false, harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "running".into() };
     (runner, session, control, receiver, task)
 }
 
@@ -387,7 +390,7 @@ fn real_agent_omp_smoke() {
         let session_id = store.create_session("active").unwrap();
         store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![repo.to_string_lossy().to_string(), session_id]).unwrap();
         let runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
-        let task = PlanTask { id: "task-1".into(), title: "Reply with OK without making changes".into(), team: "".into(), harness: "omp".into(), model: None, worktree: true, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+        let task = PlanTask { id: "task-1".into(), title: "Reply with OK without making changes".into(), team: "".into(), pinned: false, harness: "omp".into(), model: None, worktree: true, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
         let plan = session::propose(&store, session_id, vec![task]).unwrap();
         session::approve(&store, session_id, plan.revision).unwrap();
         assert_eq!(runner.start(session_id).unwrap(), ["task-1"]);
@@ -986,7 +989,7 @@ fn title_model_selection_per_harness_with_fallback() {
                 *cap.lock().unwrap() = Some(title.to_string());
             }));
             runner.launch = Arc::new(|_| Some(launch("models")));
-            let task = PlanTask { id: "task".into(), title: "Write an algorithm".into(), team: "".into(), harness: harness.into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+            let task = PlanTask { id: "task".into(), title: "Write an algorithm".into(), team: "".into(), pinned: false, harness: harness.into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
             session::propose(&runner.store, session_id, vec![task]).unwrap();
             session::approve(&runner.store, session_id, 1).unwrap();
             runner.start(session_id).unwrap();
@@ -1038,7 +1041,7 @@ fn typed_title_not_overwritten_by_generated_title() {
         let session = store.create_named_session("User Typed Title", proj.id, &root, false).unwrap();
         let mut runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
         runner.launch = Arc::new(|_| Some(launch("models")));
-        let task = PlanTask { id: "task".into(), title: "Do work".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+        let task = PlanTask { id: "task".into(), title: "Do work".into(), team: "".into(), pinned: false, harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
         session::propose(&runner.store, session.id, vec![task]).unwrap();
         session::approve(&runner.store, session.id, 1).unwrap();
         runner.start(session.id).unwrap();
@@ -1064,7 +1067,7 @@ fn failed_or_timed_out_title_keeps_truncated_first_message() {
         let session = store.create_named_session("New session", proj.id, &root, false).unwrap();
         let mut runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
         runner.launch = Arc::new(|_| Some(launch("title_fail")));
-        let task = PlanTask { id: "task".into(), title: "Investigate and solve the issue with concurrency in runner".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+        let task = PlanTask { id: "task".into(), title: "Investigate and solve the issue with concurrency in runner".into(), team: "".into(), pinned: false, harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
         session::propose(&runner.store, session.id, vec![task]).unwrap();
         session::approve(&runner.store, session.id, 1).unwrap();
         runner.start(session.id).unwrap();
@@ -1152,7 +1155,7 @@ fn recover_marks_orphaned_review_tasks_interrupted() {
     let store = Store::open(":memory:").unwrap();
     let session_id = store.create_session("active").unwrap();
     let runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
-    let task = PlanTask { id: "task-r".into(), title: "Review task".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+    let task = PlanTask { id: "task-r".into(), title: "Review task".into(), team: "".into(), pinned: false, harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
     session::propose(&store, session_id, vec![task]).unwrap();
     session::approve(&store, session_id, 1).unwrap();
     session::transition(&store, session_id, "task-r", "running").unwrap();
@@ -1211,7 +1214,7 @@ fn session_transition_allows_review_to_running() {
     // [ADR-0018.D2] Task transition must allow review -> running for a subsequent turn
     let store = Store::open(":memory:").unwrap();
     let session = store.create_session("active").unwrap();
-    let task = PlanTask { id: "task-1".into(), title: "Work".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+    let task = PlanTask { id: "task-1".into(), title: "Work".into(), team: "".into(), pinned: false, harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
     session::propose(&store, session, vec![task]).unwrap();
     session::approve(&store, session, 1).unwrap();
     session::transition(&store, session, "task-1", "running").unwrap();
@@ -1249,7 +1252,7 @@ fn adr0020_multi_task_and_task_with_files_keep_wrapper() {
         // Case 1: Multi-task plan (2 tasks) without files still uses wrapper
         {
             let (runner, session_id, control, stop, task1) = setup();
-            let task2 = PlanTask { id: "task2".into(), title: "Second".into(), team: "".into(), harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+            let task2 = PlanTask { id: "task2".into(), title: "Second".into(), team: "".into(), pinned: false, harness: "fake".into(), model: None, worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
             session::propose(&runner.store, session_id, vec![task1.clone(), task2]).unwrap();
             session::approve(&runner.store, session_id, 1).unwrap();
             let worker = runner.clone();
@@ -1496,6 +1499,7 @@ fn adr0021_title_session_unaffected_by_sessions_model() {
             id: "task".into(),
             title: "Write an algorithm".into(),
             team: "".into(),
+            pinned: false,
             harness: "claude-code".into(),
             model: Some("gpt-4o".into()),
             worktree: false,
@@ -1560,5 +1564,161 @@ fn adr0021_config_option_update_during_set_model_deduplicates_event() {
         assert_eq!(change_events.len(), 1);
 
         runner.shutdown();
+    });
+}
+
+fn insert_team(store: &Store, id: &str, steps: &[(&str, Option<&str>)]) {
+    let conn = store.connection().unwrap();
+    conn.execute("INSERT INTO teams (id, name, role) VALUES (?1, ?1, 'orchestrator')", [id]).unwrap();
+    for (position, (harness, model)) in steps.iter().enumerate() {
+        conn.execute("INSERT INTO team_steps (team_id, position, harness, model) VALUES (?1, ?2, ?3, ?4)", rusqlite::params![id, position as i64, harness, model]).unwrap();
+    }
+}
+
+// [ADR-0011.D1] Missing launch specs are skipped in order and each switch is recorded.
+#[test]
+fn team_chain_skips_unrunnable_steps_in_order() {
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session, control, stop, mut task) = setup();
+        insert_team(&runner.store, "ordered", &[("missing-a", Some("a")), ("missing-b", Some("b")), ("last", Some("c"))]);
+        task.team = "ordered".into();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let seen = calls.clone();
+        runner.launch = Arc::new(move |id| { seen.lock().unwrap().push(id.to_owned()); if id == "last" { Some(launch("max_tokens")) } else { None } });
+        let result = runner.run_task_attempts(session, &task, std::env::temp_dir().to_str().unwrap(), control, stop).await.unwrap();
+        assert_eq!(result, ("failed", Some("max_tokens".into())));
+        assert_eq!(*calls.lock().unwrap(), ["missing-a", "missing-b", "last"]);
+        let events = runner.store.events(session, 0, 1000).unwrap();
+        let switches: Vec<_> = events.iter().filter(|event| event.kind == "team_fallback").collect();
+        assert_eq!(switches.len(), 2);
+        assert_eq!(switches[0].payload["from"], "missing-a/a");
+        assert_eq!(switches[0].payload["to"], "missing-b/b");
+        assert_eq!(switches[0].payload["reason"], "harness is not runnable");
+        assert_eq!(switches[1].payload["to"], "last/c");
+    });
+}
+
+// [ADR-0011.D1] Authentication failures switch to the next step with the observed reason.
+#[test]
+fn team_chain_falls_back_on_authentication_failure() {
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session, control, stop, mut task) = setup();
+        insert_team(&runner.store, "auth-team", &[("first", Some("one")), ("second", Some("two"))]);
+        task.team = "auth-team".into();
+        runner.launch = Arc::new(|id| Some(launch(if id == "first" { "auth_required" } else { "max_tokens" })));
+        let result = runner.run_task_attempts(session, &task, std::env::temp_dir().to_str().unwrap(), control, stop).await.unwrap();
+        assert_eq!(result, ("failed", Some("max_tokens".into())));
+        let events = runner.store.events(session, 0, 1000).unwrap();
+        let fallback = events.iter().find(|event| event.kind == "team_fallback").unwrap();
+        assert_eq!(fallback.payload["from"], "first/one");
+        assert_eq!(fallback.payload["to"], "second/two");
+        assert_eq!(fallback.payload["reason"], "authentication_required");
+        assert_eq!(events.iter().filter(|event| event.kind == "user_message").count(), 1);
+    });
+}
+
+// [ADR-0011.D1] Output from an attempt prevents replay, and its selected team model is applied.
+#[test]
+fn team_chain_never_replays_after_output() {
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session, control, stop, mut task) = setup();
+        insert_team(&runner.store, "output", &[("first", Some("gpt-4o")), ("second", None)]);
+        task.team = "output".into();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let seen = calls.clone();
+        runner.launch = Arc::new(move |id| { seen.lock().unwrap().push(id.to_owned()); Some(launch("team_model_crash")) });
+        let result = runner.run_task_attempts(session, &task, std::env::temp_dir().to_str().unwrap(), control, stop).await.unwrap();
+        assert_eq!(result, ("failed", Some("process_exited".into())));
+        assert_eq!(*calls.lock().unwrap(), ["first"]);
+        let events = runner.store.events(session, 0, 1000).unwrap();
+        assert!(!events.iter().any(|event| event.kind == "team_fallback"));
+        let output = events.iter().find(|event| event.kind == "agent_message").unwrap();
+        let text: serde_json::Value = serde_json::from_str(output.payload["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text["selected_model"], "gpt-4o");
+    });
+}
+
+// [ADR-0011.D1] Exhaustion returns the last observed reason, not the first.
+#[test]
+fn team_chain_exhaustion_returns_last_reason() {
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session, control, stop, mut task) = setup();
+        insert_team(&runner.store, "exhausted", &[("first", None), ("missing", None)]);
+        task.team = "exhausted".into();
+        runner.launch = Arc::new(|id| if id == "first" { Some(launch("auth_required")) } else { None });
+        let error = runner.run_task_attempts(session, &task, std::env::temp_dir().to_str().unwrap(), control, stop).await.unwrap_err();
+        assert_eq!(error, "harness is not runnable");
+    });
+}
+
+// [ADR-0011.D1] Task teams override session teams; without either, the task harness is unchanged.
+#[test]
+fn team_resolution_respects_task_session_and_no_team() {
+    tauri::async_runtime::block_on(async {
+        for (task_team, session_team, expected) in [("task-team", Some("session-team"), "task-step"), ("", Some("session-team"), "session-step"), ("", None, "fake")] {
+            let (mut runner, session, control, stop, mut task) = setup();
+            insert_team(&runner.store, "task-team", &[("task-step", None)]);
+            insert_team(&runner.store, "session-team", &[("session-step", None)]);
+            runner.store.connection().unwrap().execute("UPDATE sessions SET team = ?1 WHERE id = ?2", rusqlite::params![session_team, session]).unwrap();
+            task.team = task_team.into();
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let seen = calls.clone();
+            runner.launch = Arc::new(move |id| { seen.lock().unwrap().push(id.to_owned()); Some(launch("max_tokens")) });
+            assert_eq!(runner.run_task_attempts(session, &task, std::env::temp_dir().to_str().unwrap(), control, stop).await.unwrap(), ("failed", Some("max_tokens".into())));
+            assert_eq!(*calls.lock().unwrap(), [expected]);
+            assert!(!runner.store.events(session, 0, 1000).unwrap().iter().any(|event| event.kind == "team_fallback"));
+        }
+    });
+}
+
+// [ADR-0012.D1] A pinned inline harness ignores both task and session teams.
+#[test]
+fn pinned_route_ignores_session_team() {
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session, control, stop, mut task) = setup();
+        insert_team(&runner.store, "session-team", &[("session-step", None)]);
+        runner.store.connection().unwrap().execute("UPDATE sessions SET team = ?1 WHERE id = ?2", rusqlite::params!["session-team", session]).unwrap();
+        task.team = "session-team".into();
+        task.pinned = true;
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let seen = calls.clone();
+        runner.launch = Arc::new(move |id| { seen.lock().unwrap().push(id.to_owned()); Some(launch("max_tokens")) });
+        assert_eq!(runner.run_task_attempts(session, &task, std::env::temp_dir().to_str().unwrap(), control, stop).await.unwrap(), ("failed", Some("max_tokens".into())));
+        assert_eq!(*calls.lock().unwrap(), ["fake"]);
+        assert!(!runner.store.events(session, 0, 1000).unwrap().iter().any(|event| event.kind == "team_fallback"));
+    });
+}
+
+// [ADR-0011.D1] A handshake timeout or process exit before output advances the chain.
+#[test]
+fn team_chain_retries_pre_output_timeout_and_exit() {
+    tauri::async_runtime::block_on(async {
+        for (scenario, reason) in [("timeout", "handshake_timeout"), ("crash", "process_exited")] {
+            let (mut runner, session, control, stop, mut task) = setup();
+            insert_team(&runner.store, "failures", &[("first", None), ("second", None)]);
+            task.team = "failures".into();
+            runner.handshake_timeout = Duration::from_millis(250);
+            runner.launch = Arc::new(move |id| Some(launch(if id == "first" { scenario } else { "max_tokens" })));
+            assert_eq!(runner.run_task_attempts(session, &task, std::env::temp_dir().to_str().unwrap(), control, stop).await.unwrap(), ("failed", Some("max_tokens".into())));
+            let events = runner.store.events(session, 0, 1000).unwrap();
+            let fallback = events.iter().find(|event| event.kind == "team_fallback").unwrap();
+            assert_eq!(fallback.payload["from"], "first");
+            assert_eq!(fallback.payload["to"], "second");
+            assert_eq!(fallback.payload["reason"], reason);
+        }
+    });
+}
+
+// [ADR-0011.D1] A selected but unknown team is an error, not an implicit harness override.
+#[test]
+fn unknown_team_does_not_launch_task_harness() {
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session, control, stop, mut task) = setup();
+        task.team = "absent".into();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let seen = calls.clone();
+        runner.launch = Arc::new(move |id| { seen.lock().unwrap().push(id.to_owned()); Some(launch("max_tokens")) });
+        assert!(runner.run_task_attempts(session, &task, std::env::temp_dir().to_str().unwrap(), control, stop).await.unwrap_err().contains("absent"));
+        assert!(calls.lock().unwrap().is_empty());
     });
 }

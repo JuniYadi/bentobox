@@ -67,7 +67,7 @@ fn run_bounded(command: &mut Command, timeout: Duration) -> Option<ProbeResult> 
     }
 }
 
-fn status_with_path(harness_id: &str, path: &OsStr, timeout: Duration) -> AuthStatus {
+pub(crate) fn status_with_path(harness_id: &str, path: &OsStr, timeout: Duration) -> AuthStatus {
     let Some(adapter) = CapabilityRegistry::get(harness_id) else {
         return AuthStatus { state: AuthState::Unavailable, auth_method: None };
     };

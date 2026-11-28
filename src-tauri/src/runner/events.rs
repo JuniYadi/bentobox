@@ -1,4 +1,5 @@
 // @adr ADR-0017.D3
+// @adr ADR-0011.D1
 use crate::db::Store;
 use agent_client_protocol::v1::schema::{ContentBlock, SessionUpdate, ToolCallContent};
 use std::collections::HashMap;
@@ -23,16 +24,19 @@ pub(crate) struct EventWriter {
     chunk: String,
     stderr_lines: usize,
     tools: HashMap<String, Value>,
+    output_count: std::cell::Cell<u64>,
 }
 
 impl EventWriter {
     /// @adr ADR-0017.D3
     pub(crate) fn new(store: Store, session_id: i64, task_id: String, emit: Emit) -> Self {
-        Self { store, session_id, task_id, branch: None, emit, chunk_kind: None, chunk_parent: None, chunk: String::new(), stderr_lines: 0, tools: HashMap::new() }
+        Self { store, session_id, task_id, branch: None, emit, chunk_kind: None, chunk_parent: None, chunk: String::new(), stderr_lines: 0, tools: HashMap::new(), output_count: std::cell::Cell::new(0) }
     }
 
     /// @adr ADR-0017.D3
     pub(crate) fn set_branch(&mut self, branch: Option<String>) { self.branch = branch; }
+
+    pub(crate) fn output_count(&self) -> u64 { self.output_count.get() }
 
     /// @adr ADR-0017.D3
     pub(crate) fn append(&self, kind: &str, mut payload: Value) -> Result<i64, String> {
@@ -40,6 +44,9 @@ impl EventWriter {
         fields.insert("plan_task_id".into(), json!(self.task_id));
         if let Some(branch) = &self.branch { fields.insert("branch".into(), json!(branch)); }
         let id = self.store.append_event(self.session_id, None, kind, payload)?;
+        if matches!(kind, "agent_message" | "agent_thought" | "tool_call" | "file_changed" | "permission_request") {
+            self.output_count.set(self.output_count.get().saturating_add(1));
+        }
         (self.emit)(self.session_id, id);
         Ok(id)
     }

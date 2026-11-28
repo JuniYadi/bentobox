@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { ArrowUp, ChevronDown, ChevronRight, GitBranch, PanelRight, Search, Settings2 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -13,9 +13,9 @@ import { ProjectTree } from "./components/layout/ProjectTree";
 import { RightPanel } from "./components/layout/RightPanel";
 import { StatusBar } from "./components/layout/StatusBar";
 import { addProjectFromPicker, projectTree, projectUnassignedSessions, type Project, type ProjectSession } from "./features/project/api";
-import { approvePlan, createSession, getPlan, listSessions, sessionSetConcise, sessionSetModel, setSessionWorktree, startDirectRun } from "./features/session/api";
+import { approvePlan, createSession, getPlan, listSessions, sessionSetConcise, sessionSetModel, sessionSetTeam, setSessionWorktree, startDirectRun } from "./features/session/api";
 import { PLAN_COMPOSER_PLACEHOLDER, PlanCard, showsPlanCard } from "./features/session/PlanCard";
-import { buildOneTaskPlan, getComposerHarnessOptions, getModelDisplayName, harnessMonogram, modelPickerState, phaseStepState, sendState, toggleSessionConcise } from "./features/session/composer";
+import { buildOneTaskPlan, getComposerHarnessOptions, getModelDisplayName, harnessMonogram, modelPickerState, phaseStepState, resolveSendRoute, sendState, toggleSessionConcise } from "./features/session/composer";
 import { AgentDetailView, AgentRightPanel, SubAgentCard } from "./features/agent-detail";
 import { fetchIncrementalEvents, loadSessionEvents, mergeEvents, partitionChatTimeline } from "./features/agent-detail/timeline";
 import { agentListModels, listDetectedHarnesses, type DetectedHarness, type ModelCatalog, type ModelOption } from "./features/agent/api";
@@ -23,7 +23,13 @@ import { onRunnerEvent, onSessionTitle, runnerRespondPermission, runnerSend, run
 import type { DbEvent, JsonValue } from "../src-tauri/src/db/api";
 import { SettingsView } from "./features/settings/SettingsView";
 import type { Plan, Session } from "./features/session/types";
+import { teamsList, type Team } from "./features/teams/api";
+import { settingsGet } from "./features/settings/api";
+import { parseInlineRoute } from "./features/routing/parser";
+import { autocompleteRoutes } from "./features/routing/suggest";
 import packageJson from "../package.json";
+
+const RoutingContext = createContext<{ teams: Team[]; catalogs: Record<string, ModelCatalog | "loading" | "error">; error: string | null; onSelectTeam?: (id: string | null) => void }>({ teams: [], catalogs: {}, error: null });
 
 const version = packageJson.version;
 const storage = { left: "bentobox.leftWidth", right: "bentobox.rightWidth", leftCollapsed: "bentobox.leftCollapsed", rightCollapsed: "bentobox.rightCollapsed" };
@@ -66,7 +72,7 @@ export default function App() {
   const [conversation, setConversation] = useState<{ sessions: Session[]; prompt: string }>({ sessions: [], prompt: "" });
   const { sessions, prompt } = conversation;
   const [stoppingTaskId, setStoppingTaskId] = useState<string | null>(null);
-  const setPrompt = (value: string) => setConversation((current) => ({ ...current, prompt: value }));
+  const setPrompt = (value: string) => { setConversation((current) => ({ ...current, prompt: value })); setRouteError(null); };
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   const [view, setView] = useState<{ kind: "main" } | { kind: "settings" } | { kind: "agent"; taskId: string }>({ kind: "main" });
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -78,6 +84,8 @@ export default function App() {
   const [detectedHarnesses, setDetectedHarnesses] = useState<DetectedHarness[]>([]);
   const [selectedHarness, setSelectedHarness] = useState<string | null>(null);
   const [modelCatalogs, setModelCatalogs] = useState<Record<string, ModelCatalog | "loading" | "error">>({});
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [routeError, setRouteError] = useState<string | null>(null);
   const planGeneration = useRef(0);
   const titleUpdates = useRef<{ sequence: number; titles: Map<number, { sequence: number; title: string }> }>({ sequence: 0, titles: new Map() });
   const eventsRef = useRef(events);
@@ -141,6 +149,12 @@ export default function App() {
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
+  useEffect(() => {
+    if (view.kind !== "main") return;
+    let cancelled = false;
+    void teamsList().then((items) => { if (!cancelled) setTeams(items); }).catch((reason) => { if (!cancelled) setError(`Could not load teams: ${String(reason)}`); });
+    return () => { cancelled = true; };
+  }, [view.kind]);
   const fetchCatalog = useCallback(async (harnessId: string, refresh = false) => {
     setModelCatalogs((prev) => ({ ...prev, [harnessId]: "loading" }));
     try {
@@ -409,33 +423,50 @@ export default function App() {
       setError(`Could not set model: ${String(reason)}`);
     }
   }
+  async function handleSelectTeam(teamId: string | null) {
+    if (!activeSession) return;
+    try {
+      await sessionSetTeam(activeSession.id, teamId);
+      setConversation((current) => ({ ...current, sessions: current.sessions.map((item) => item.id === activeSession.id ? { ...item, team: teamId } : item) }));
+      setError(null);
+    } catch (reason) { setError(`Could not set session team: ${String(reason)}`); }
+  }
   async function handleSend() {
-    if (!activeSession || !selectedHarness || !prompt.trim() || sendingRef.current) return;
-    const state = sendState({ text: prompt, harness: selectedHarness, plan: activePlan });
-    if (!state.enabled) return;
+    if (!activeSession || !prompt.trim() || sendingRef.current) return;
+    const parsed = parseInlineRoute(prompt, detectedHarnesses.map((h) => h.capabilities.harness_id), teams.map((team) => team.name));
+    if (parsed.error) { setRouteError(parsed.error); return; }
+    if (!parsed.promptText.trim()) { setRouteError("Describe a goal for the agent."); return; }
+    const task = activePlan?.tasks.length === 1 ? activePlan.tasks[0] : null;
     const generation = planGeneration.current;
     sendingRef.current = true;
     try {
-      const task = activePlan?.tasks.length === 1 ? activePlan.tasks[0] : null;
+      const runnableHarnesses = getComposerHarnessOptions(detectedHarnesses).filter((item) => item.runnable).map((item) => item.harnessId);
+      let unavailableAction: "ask" | "fallback" = "ask";
+      if (parsed.route?.kind === "harness" && !runnableHarnesses.includes(parsed.route.harness) && task?.status !== "running" && task?.status !== "review") {
+        const setting = await settingsGet("routing.unavailable_action").catch(() => null);
+        if (setting === "fallback") unavailableAction = "fallback";
+      }
+      const decision = resolveSendRoute({ route: parsed.route, taskStatus: task?.status, selectedHarness, sessionTeam: activeSession.team, sessionModel: activeSession.model, teams, runnableHarnesses, unavailableAction });
+      if (decision.error !== null) { setRouteError(decision.error); return; }
+      const state = sendState({ text: parsed.promptText, harness: decision.harness, plan: activePlan });
+      if (!state.enabled) { setRouteError(state.reason); return; }
       if (task && (task.status === "running" || task.status === "review")) {
-        await runnerSend(activeSession.id, task.id, prompt.trim());
+        await runnerSend(activeSession.id, task.id, parsed.promptText.trim());
       } else {
         const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        const tasks = buildOneTaskPlan(prompt, selectedHarness, activeProject?.isGit !== false && activeSession.optInWorktree, suffix, activeSession.model);
+        const tasks = buildOneTaskPlan(parsed.promptText, decision.harness, activeProject?.isGit !== false && activeSession.optInWorktree, suffix, decision.model, { team: decision.team, pinned: decision.pinned });
         await startDirectRun(activeSession.id, tasks);
         const updated = await getPlan(activeSession.id);
         if (planGeneration.current === generation) setPlan(updated);
         void reloadProjects().catch(() => {});
       }
-      if (planGeneration.current === generation) { setPrompt(""); setError(null); }
+      if (planGeneration.current === generation) { setPrompt(""); setError(null); setRouteError(null); }
     } catch (reason) {
       if (planGeneration.current === generation) {
         setError(`Could not send message: ${String(reason)}`);
         void getPlan(activeSession.id).then((updated) => { if (planGeneration.current === generation) setPlan(updated); }).catch(() => {});
       }
-    } finally {
-      sendingRef.current = false;
-    }
+    } finally { sendingRef.current = false; }
   }
 
 
@@ -449,7 +480,9 @@ export default function App() {
             <SidebarFooter className="border-t p-2">{!leftCollapsed && <Button variant="ghost" className="justify-start" onClick={() => setView({ kind: "settings" })}><Settings2 /><span>Settings ⌘,</span></Button>}<Button variant="ghost" className="justify-start" onClick={() => { const value = !leftCollapsed; setLeftCollapsed(value); localStorage.setItem(storage.leftCollapsed, String(value)); }}><PanelRight />{!leftCollapsed && <span>Collapse ⌘B</span>}</Button></SidebarFooter>
           </Sidebar>
           {!leftCollapsed && <div role="separator" aria-label="Resize project sidebar" aria-orientation="vertical" aria-valuenow={Math.round(widths.left / windowWidth * 100)} aria-valuemin={Math.round(geometry.left.min / windowWidth * 100)} aria-valuemax={Math.round(geometry.left.max / windowWidth * 100)} tabIndex={0} className="w-1 shrink-0 cursor-col-resize hover:bg-ring focus-visible:bg-ring" onDoubleClick={() => { localStorage.removeItem(storage.left); setLeftFraction(null); }} onKeyDown={(event) => resizeKey(event, "left", leftFraction)} onPointerDown={(event) => beginResize(event, "left")} />}
+          <RoutingContext.Provider value={{ teams, catalogs: modelCatalogs, error: routeError, onSelectTeam: (id) => void handleSelectTeam(id) }}>
           <main data-region="content" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">{view.kind === "settings" ? <SettingsView onClose={() => setView({ kind: "main" })} /> : view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentDetailView session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} onBack={() => setView({ kind: "main" })} /> : <><TopBar session={activeSession} plan={activePlan} project={activeProject} collapsed={effectiveRightCollapsed} onToggle={() => { const next = !rightCollapsed; setRightCollapsed(next); localStorage.setItem(storage.rightCollapsed, String(next)); }} /><Chat session={activeSession} plan={activePlan} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} scrollRef={chatScrollRef} nonGit={activeProject?.isGit === false} busy={approvingSessionId === activeSessionId && activeSessionId !== null} stoppingTaskId={stoppingTaskId} onStop={(taskId) => void stopChatTask(taskId)} onApprove={(revision) => void approveCurrentPlan(revision)} onOpenAgent={(taskId) => setView({ kind: "agent", taskId })} prompt={prompt} onPromptChange={setPrompt} onToggleWorktree={toggleWorktree} onToggleConcise={toggleConcise} onCreateSession={() => { const project = activeProject ?? projects[0]; if (project) void createNewSession(project); }} error={error} loading={loading} harnesses={detectedHarnesses} selectedHarness={selectedHarness} onSelectHarness={(harnessId) => void handleSelectHarness(harnessId)} onSelectModel={(modelId) => void handleSelectModel(modelId)} modelCatalog={selectedHarness ? modelCatalogs[selectedHarness] : undefined} onRetryModels={() => { if (selectedHarness) void fetchCatalog(selectedHarness, true); }} onOpenModelMenu={() => { if (selectedHarness && !modelCatalogs[selectedHarness]) void fetchCatalog(selectedHarness); }} onSend={() => void handleSend()} onPermission={(taskId, requestId, decision) => { if (activeSession) void runnerRespondPermission(activeSession.id, taskId, requestId, decision).catch((reason) => setError(`Could not respond to permission: ${String(reason)}`)); }} onMode={(taskId, modeId) => { if (activeSession) void runnerSetMode(activeSession.id, taskId, modeId).catch((reason) => setError(`Could not change mode: ${String(reason)}`)); }} /></>}</main>
+          </RoutingContext.Provider>
           {view.kind !== "settings" && !effectiveRightCollapsed && <><div role="separator" aria-label="Resize contextual panel" aria-orientation="vertical" aria-valuenow={Math.round(widths.right / windowWidth * 100)} aria-valuemin={Math.round(geometry.right.min / windowWidth * 100)} aria-valuemax={Math.round(geometry.right.max / windowWidth * 100)} tabIndex={0} className="w-1 shrink-0 cursor-col-resize hover:bg-ring focus-visible:bg-ring" onDoubleClick={() => { localStorage.removeItem(storage.right); setRightFraction(null); }} onKeyDown={(event) => resizeKey(event, "right", rightFraction)} onPointerDown={(event) => beginResize(event, "right")} />
           <div data-region="right" className="h-full min-h-0 shrink-0 overflow-hidden w-(--right-width)" style={{ "--right-width": regionWidthCss("right", rightFraction) } as React.CSSProperties}>{view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentRightPanel session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} /> : <RightPanel onUseAsPrompt={setPrompt} />}</div></>}
         </SidebarProvider>
@@ -559,6 +592,56 @@ export interface ChatProps {
   onStop?: (taskId: string) => void;
 }
 
+function RouteInput({ prompt, onPromptChange, harnesses, plan }: { prompt: string; onPromptChange: (value: string) => void; harnesses: DetectedHarness[]; plan: Plan | null }) {
+  const routing = useContext(RoutingContext);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [caret, setCaret] = useState<number | null>(null);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const prefix = caret === null ? null : /(?:^|\s)(@\S*)$/.exec(prompt.slice(0, caret));
+  const tokenStart = prefix && caret !== null ? caret - prefix[1].length : null;
+  const suggestions = prefix ? autocompleteRoutes(prefix[1], harnesses, routing.catalogs, routing.teams) : [];
+  const parsedPrompt = parseInlineRoute(prompt, harnesses.map((h) => h.capabilities.harness_id), routing.teams.map((team) => team.name));
+  function selectSuggestion(value: string) {
+    if (tokenStart === null || caret === null) return;
+    const end = caret + (prompt.slice(caret).match(/^\S*/)?.[0].length ?? 0);
+    const completion = value.includes("/") || value.startsWith("@team:") ? `${value} ` : `${value}/`;
+    const suffix = prompt.slice(end);
+    const next = prompt.slice(0, tokenStart) + completion + (completion.endsWith(" ") ? suffix.replace(/^\s*/, "") : suffix);
+    const nextCaret = tokenStart + completion.length;
+    onPromptChange(next);
+    setCaret(completion.endsWith("/") ? nextCaret : null);
+    requestAnimationFrame(() => { textareaRef.current?.focus(); textareaRef.current?.setSelectionRange(nextCaret, nextCaret); });
+  }
+  return <>
+        <div className="relative">
+          {suggestions.length > 0 && <div role="listbox" aria-label="Route suggestions" className="absolute bottom-full left-0 z-10 max-h-48 w-full overflow-auto rounded border bg-popover p-1 shadow-md">
+            {suggestions.map((item, index) => <button type="button" role="option" aria-selected={index === suggestionIndex % suggestions.length} key={item.value} className="flex w-full justify-between rounded px-2 py-1 text-left text-xs hover:bg-accent" onMouseDown={(event) => event.preventDefault()} onClick={() => selectSuggestion(item.value)}><span>{item.value}</span><span className="text-muted-foreground">{item.availability}</span></button>)}
+          </div>}
+          <Textarea ref={textareaRef} aria-label="Prompt" value={prompt} onChange={(event) => { onPromptChange(event.target.value); setCaret(event.target.selectionStart); setSuggestionIndex(0); }} onSelect={(event) => { setCaret(event.currentTarget.selectionStart); setSuggestionIndex(0); }} onKeyDown={(event) => {
+            if (!suggestions.length) return;
+            if (event.key === "Escape") { event.preventDefault(); setCaret(null); }
+            else if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setSuggestionIndex((index) => (index + (event.key === "ArrowDown" ? 1 : suggestions.length - 1)) % suggestions.length); }
+            else if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); selectSuggestion(suggestions[suggestionIndex % suggestions.length].value); }
+          }} placeholder={showsPlanCard(plan) ? PLAN_COMPOSER_PLACEHOLDER : "Describe the goal…"} className="min-h-16 resize-none border-0 shadow-none focus-visible:ring-0" />
+        </div>
+        {routing.error && <p role="alert" className="px-3 text-xs text-destructive">{routing.error}</p>}
+        {parsedPrompt.route?.kind === "harness" && parsedPrompt.route.effort && <p role="status" className="px-3 text-xs text-muted-foreground">effort is not applied yet</p>}
+  </>;
+}
+
+function TeamPicker({ session }: { session: Session | null }) {
+  const routing = useContext(RoutingContext);
+  return <>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild><Button type="button" variant="outline" size="sm" disabled={!session || !routing.onSelectTeam} className="h-7 px-2 text-xs">Team: {routing.teams.find((team) => team.id === session?.team)?.name ?? "No team"}<ChevronDown className="ml-1 size-3.5" /></Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-48 p-1">
+              <DropdownMenuItem onClick={() => routing.onSelectTeam?.(null)}>No team</DropdownMenuItem>
+              {routing.teams.map((team) => <DropdownMenuItem key={team.id} onClick={() => routing.onSelectTeam?.(team.id)}>{team.name}</DropdownMenuItem>)}
+            </DropdownMenuContent>
+          </DropdownMenu>
+  </>;
+}
+
 /** @adr ADR-0016.D2 */
 export function Chat({
   session,
@@ -596,7 +679,7 @@ export function Chat({
 
   const currentSendState = sendState({
     text: prompt,
-    harness: selectedHarness,
+    harness: selectedHarness ?? (session?.team || /(?:^|\s)@\S+/.test(prompt) ? "route" : null),
     plan,
   });
   const sendDisabled = !currentSendState.enabled || !session;
@@ -709,7 +792,7 @@ export function Chat({
     </section>
     <div className="mx-auto w-full px-6 pb-5 max-w-(--chat-max-width)" style={{ "--chat-max-width": "calc(720 * var(--fw))" } as React.CSSProperties}>
       <form onSubmit={(event) => { event.preventDefault(); if (!sendDisabled && onSend) onSend(); }} className="rounded-lg border border-input bg-background focus-within:ring-1 focus-within:ring-ring">
-        <Textarea aria-label="Prompt" value={prompt} onChange={(event) => onPromptChange(event.target.value)} placeholder={showsPlanCard(plan) ? PLAN_COMPOSER_PLACEHOLDER : "Describe the goal…"} className="min-h-16 resize-none border-0 shadow-none focus-visible:ring-0" />
+        <RouteInput prompt={prompt} onPromptChange={onPromptChange} harnesses={harnesses} plan={plan} />
         {currentSendState.reason && (
           <p
             id="send-disabled-reason"
@@ -719,6 +802,7 @@ export function Chat({
           </p>
         )}
         <div className="flex items-center gap-3 p-2">
+          <TeamPicker session={session} />
           {task && modes.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

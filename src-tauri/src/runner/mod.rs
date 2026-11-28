@@ -3,6 +3,7 @@
 // @adr ADR-0020.D2
 // @adr ADR-0021.D1
 // @adr ADR-0021.D2
+// @adr ADR-0011.D1
 mod events;
 
 use crate::{agent, db::Store, session::{self, Plan, PlanTask}, workspace};
@@ -396,10 +397,7 @@ impl Runner {
     }
 
     async fn run_task(&self, session_id: i64, task: PlanTask, workspace_path: String, control: Arc<TaskControl>, stop: watch::Receiver<bool>) {
-        let result = match (self.launch)(&task.harness) {
-            Some(spec) => self.execute(session_id, &task, &workspace_path, control.clone(), stop, spec, self.handshake_timeout).await,
-            None => Err("harness is not runnable".into()),
-        };
+        let result = self.run_task_attempts(session_id, &task, &workspace_path, control.clone(), stop).await;
         if let Ok(mut queue) = control.send_queue.lock() { queue.clear(); }
         if let Ok(mut pending) = control.pending.lock() {
             for (request_id, permission) in std::mem::take(&mut *pending) {
@@ -425,15 +423,71 @@ impl Runner {
         for id in sessions { let _ = self.schedule(id); }
     }
 
-    async fn execute(&self, session_id: i64, task: &PlanTask, workspace_path: &str, control: Arc<TaskControl>, mut stop: watch::Receiver<bool>, spec: agent::LaunchSpec, handshake_timeout: Duration) -> Result<(&'static str, Option<String>), String> {
+    async fn run_task_attempts(&self, session_id: i64, task: &PlanTask, workspace_path: &str, control: Arc<TaskControl>, stop: watch::Receiver<bool>) -> Result<(&'static str, Option<String>), String> {
+        let team = if task.pinned { None } else if task.team.trim().is_empty() { self.store.session_team(session_id)? } else { Some(task.team.clone()) };
+        let Some(team) = team.filter(|key| !key.trim().is_empty()) else {
+            return match (self.launch)(&task.harness) {
+                Some(spec) => self.execute(session_id, task, workspace_path, control, stop, spec, self.handshake_timeout).await,
+                None => Err("harness is not runnable".into()),
+            };
+        };
+        let chain = self.store.team_chain_for(&team)?.ok_or_else(|| format!("unknown team: {team}"))?;
+        let mut workspace = None;
+        let mut previous: Option<(&crate::teams::TeamStep, String)> = None;
+        for step in &chain {
+            if *stop.borrow() { return Ok(("cancelled", None)); }
+            if let Some((from, reason)) = previous.take() {
+                control.events.lock().map_err(|_| "event lock poisoned")?.append("team_fallback", json!({
+                    "from": from.model.as_ref().map_or_else(|| from.harness.clone(), |model| format!("{}/{model}", from.harness)),
+                    "to": step.model.as_ref().map_or_else(|| step.harness.clone(), |model| format!("{}/{model}", step.harness)),
+                    "reason": reason,
+                }))?;
+            }
+            let Some(spec) = (self.launch)(&step.harness) else {
+                previous = Some((step, "harness is not runnable".into()));
+                continue;
+            };
+            if crate::auth::auth_status(step.harness.clone()).await.state == crate::auth::AuthState::Unauthenticated {
+                previous = Some((step, "authentication_required".into()));
+                continue;
+            }
+            if *stop.borrow() { return Ok(("cancelled", None)); }
+            let before = control.events.lock().map_err(|_| "event lock poisoned")?.output_count();
+            let mut attempt = task.clone();
+            attempt.harness = step.harness.clone();
+            attempt.model = step.model.clone();
+            let result = self.execute_attempt(session_id, &attempt, workspace_path, control.clone(), stop.clone(), spec, self.handshake_timeout, &mut workspace, true).await;
+            let after = control.events.lock().map_err(|_| "event lock poisoned")?.output_count();
+            let reason = match &result {
+                Err(reason) => Some(reason.as_str()),
+                Ok(("failed", Some(reason))) => Some(reason.as_str()),
+                _ => None,
+            };
+            if before == after && reason.is_some_and(|reason| matches!(reason, "harness is not runnable" | "authentication_required" | "handshake_timeout" | "process_exited")) {
+                previous = Some((step, reason.unwrap().to_owned()));
+                if let Ok(mut active) = control.active_session.lock() { *active = None; }
+                continue;
+            }
+            return result;
+        }
+        Err(previous.map(|(_, reason)| reason).unwrap_or_else(|| format!("team has no steps: {team}")))
+    }
+
+    async fn execute(&self, session_id: i64, task: &PlanTask, workspace_path: &str, control: Arc<TaskControl>, stop: watch::Receiver<bool>, spec: agent::LaunchSpec, handshake_timeout: Duration) -> Result<(&'static str, Option<String>), String> {
+        self.execute_attempt(session_id, task, workspace_path, control, stop, spec, handshake_timeout, &mut None, false).await
+    }
+
+    async fn execute_attempt(&self, session_id: i64, task: &PlanTask, workspace_path: &str, control: Arc<TaskControl>, mut stop: watch::Receiver<bool>, spec: agent::LaunchSpec, handshake_timeout: Duration, workspace: &mut Option<(PathBuf, Option<String>)>, team_route: bool) -> Result<(&'static str, Option<String>), String> {
         let root = PathBuf::from(workspace_path).canonicalize().map_err(|e| e.to_string())?;
         if task.files.iter().any(|file| std::path::Path::new(file).components().any(|part| matches!(part, std::path::Component::ParentDir | std::path::Component::RootDir | std::path::Component::Prefix(_)))) {
             return Err("task files must be relative to the worktree".into());
         }
-        let (cwd, branch) = if task.worktree && crate::project::is_git_repo(&root) {
+        let first_attempt = workspace.is_none();
+        let (cwd, branch) = if let Some(existing) = workspace.as_ref() { existing.clone() } else if task.worktree && crate::project::is_git_repo(&root) {
             let worktree = workspace::create(&root, &task.id, "HEAD", true)?.ok_or("worktree creation disabled")?.worktree;
             (PathBuf::from(worktree.path).canonicalize().map_err(|e| e.to_string())?, worktree.branch)
         } else { (root, None) };
+        *workspace = Some((cwd.clone(), branch.clone()));
         let placeholder = clean_title(&task.title);
         if !placeholder.is_empty() {
             let _ = self.store.set_placeholder_title(session_id, &placeholder);
@@ -450,7 +504,7 @@ impl Runner {
         if self.store.session_concise(session_id).unwrap_or(false) {
             prompt = apply_concise_instruction(&prompt);
         }
-        {
+        if first_attempt {
             let mut events = control.events.lock().map_err(|_| "event lock poisoned")?;
             events.set_branch(branch);
             events.append("user_message", json!({"text": task.title}))?;
@@ -671,7 +725,7 @@ impl Runner {
                 });
 
                 if let Some(cfg_id) = model_config_id {
-                    let desired = task.model.clone().or_else(|| capability_store.session_model(session_id).ok().flatten());
+                    let desired = if team_route { task.model.clone() } else { task.model.clone().or_else(|| capability_store.session_model(session_id).ok().flatten()) };
                     if let Some(desired_model) = desired {
                         if available_models.iter().any(|m| m.id == desired_model) {
                             let current_now = foreground.active_session.lock().unwrap().as_ref().and_then(|a| a.current_model.clone());

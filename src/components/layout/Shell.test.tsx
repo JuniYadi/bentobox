@@ -36,7 +36,7 @@ describe("[ADR-0016.D2] session composer", () => {
   });
 
   test("shows the actual worktree branch or a non-monospace fallback", () => {
-    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: true, conciseReplies: false, model: null, subAgents: [] };
+    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: true, conciseReplies: false, model: null, team: null, subAgents: [] };
     const render = (worktreeBranch?: string) => renderToStaticMarkup(<TooltipProvider><TopBar session={{ ...session, worktreeBranch }} plan={null} collapsed={false} onToggle={() => {}} /></TooltipProvider>);
     expect(render()).toContain("Worktree on");
     expect(render()).not.toContain('class="font-mono">Worktree on');
@@ -44,8 +44,8 @@ describe("[ADR-0016.D2] session composer", () => {
   });
 
   test("creating a session retains the current composer draft", () => {
-    const previous = { sessions: [{ id: 1, title: "Existing", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] }], prompt: "Keep this draft" };
-    const created = { id: 2, title: "New session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+    const previous = { sessions: [{ id: 1, title: "Existing", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] }], prompt: "Keep this draft" };
+    const created = { id: 2, title: "New session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
     const next = nextStateAfterCreate(previous, created);
     expect(next.prompt).toBe("Keep this draft");
     expect(next.sessions).toEqual([...previous.sessions, created]);
@@ -66,7 +66,7 @@ describe("[ADR-0016.D2] session composer", () => {
 
 describe("[ADR-0016.D3] plan in the shell", () => {
   test("renders the plan composer placeholder and sends the displayed revision", () => {
-    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
     const task = { id: "t1", title: "First task", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status: "queued" as const };
     const plan = { session_id: 1, revision: 17, phase: "Plan" as const, approved: false, estimated_tokens: null, tasks_started: false, tasks: [task, { ...task, id: "t2" }] };
     const onApprove = mock((_revision: number) => {});
@@ -84,14 +84,14 @@ describe("[ADR-0016.D3] plan in the shell", () => {
   });
 
   test("[ADR-0018.D1] single task does not show a PlanCard", () => {
-    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
     const plan = { session_id: 1, revision: 2, phase: "Plan" as const, approved: false, estimated_tokens: null, tasks_started: false, tasks: [{ id: "t1", title: "Implement feature", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status: "queued" as const }] };
     const html = renderToStaticMarkup(<TooltipProvider><Chat session={session} plan={plan} busy={false} onApprove={() => {}} onOpenAgent={() => {}} onToggleWorktree={() => {}} onCreateSession={() => {}} prompt="" onPromptChange={() => {}} error={null} loading={false} /></TooltipProvider>);
     expect(html).not.toContain("Approve &amp; build");
   });
 
   test("[ADR-0018.D4] multi-task plans show sub-agents only after tasks start", () => {
-    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
     const task = { id: "t1", title: "Implement feature", team: "", harness: "omp", worktree: true, files: [], dependencies: [], estimated_tokens: null, status: "queued" as const };
     const plan = { session_id: 1, revision: 2, phase: "Build" as const, approved: true, estimated_tokens: null, tasks_started: false, tasks: [task, { ...task, id: "t2", title: "Review feature" }] };
     const render = (tasks_started: boolean) => renderToStaticMarkup(<TooltipProvider><Chat session={session} plan={{ ...plan, tasks_started }} busy={false} onApprove={() => {}} onOpenAgent={() => {}} onToggleWorktree={() => {}} onCreateSession={() => {}} prompt="" onPromptChange={() => {}} error={null} loading={false} /></TooltipProvider>);
@@ -100,7 +100,7 @@ describe("[ADR-0016.D3] plan in the shell", () => {
   });
 
   test("does not render an approval card or revision placeholder in Build", () => {
-    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
     const plan = { session_id: 1, revision: 2, phase: "Build" as const, approved: true, estimated_tokens: null, tasks_started: true, tasks: [] };
     const html = renderToStaticMarkup(<TooltipProvider><Chat session={session} plan={plan} busy={false} onApprove={() => {}} onOpenAgent={() => {}} onToggleWorktree={() => {}} onCreateSession={() => {}} prompt="" onPromptChange={() => {}} error={null} loading={false} /></TooltipProvider>);
     expect(html).not.toContain("Approve &amp; build");
@@ -109,7 +109,7 @@ describe("[ADR-0016.D3] plan in the shell", () => {
   });
 
   test("[ADR-0018.D3] modes and always-allow appear only when advertised", () => {
-    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
     const task = { id: "t1", title: "Work", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status: "running" as const };
     const plan = { session_id: 1, revision: 1, phase: "Build" as const, approved: true, estimated_tokens: null, tasks_started: true, tasks: [task] };
     const request: DbEvent = { id: 1, session_id: 1, task_id: null, kind: "permission_request", payload: { plan_task_id: "t1", request_id: "r1", operation: "Write" }, created_at: "2026-11-28" };
@@ -125,7 +125,7 @@ describe("[ADR-0016.D3] plan in the shell", () => {
   });
 
   test("[ADR-0018.D3] mode and always-allow controls dispatch their selected values", () => {
-    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
     const task = { id: "t1", title: "Work", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status: "running" as const };
     const plan = { session_id: 1, revision: 1, phase: "Build" as const, approved: true, estimated_tokens: null, tasks_started: true, tasks: [task] };
     const events: DbEvent[] = [
@@ -143,7 +143,7 @@ describe("[ADR-0016.D3] plan in the shell", () => {
   });
 
   test("[ADR-0018.D4] shows conversation and groups resolved and tool events as activity", () => {
-    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+    const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
     const task = { id: "t1", title: "Work", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status: "running" as const };
     const plan = { session_id: 1, revision: 1, phase: "Build" as const, approved: true, estimated_tokens: null, tasks_started: true, tasks: [task] };
     const event = (id: number, kind: string, payload: Record<string, string>): DbEvent => ({ id, session_id: 1, task_id: null, kind, payload: { plan_task_id: "t1", ...payload }, created_at: "2026-11-28" });
@@ -158,7 +158,7 @@ describe("[ADR-0016.D3] plan in the shell", () => {
   });
 
   test("[ADR-0019.D2] disables worktree isolation for a non-git project", () => {
-    const session = { id: 1, title: "Session", workspacePath: "/folder", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+    const session = { id: 1, title: "Session", workspacePath: "/folder", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
     const html = renderToStaticMarkup(<TooltipProvider><Chat session={session} plan={null} nonGit busy={false} onApprove={() => {}} onOpenAgent={() => {}} onToggleWorktree={() => {}} onCreateSession={() => {}} prompt="" onPromptChange={() => {}} error={null} loading={false} /></TooltipProvider>);
     expect(html).toContain("Not a git repository: worktree isolation is unavailable");
     expect(html).toMatch(/role="switch"[^>]*disabled/);
@@ -236,7 +236,7 @@ describe("[ADR-0016.D2] session telemetry", () => {
 
 
 test("[ADR-0018.D3] mode picker reflects the latest mode change", () => {
-  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
   const task = { id: "t1", title: "Work", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status: "review" as const };
   const plan = { session_id: 1, revision: 1, phase: "Review" as const, approved: true, estimated_tokens: null, tasks_started: true, tasks: [task] };
   const events: DbEvent[] = [
@@ -249,7 +249,7 @@ test("[ADR-0018.D3] mode picker reflects the latest mode change", () => {
 });
 
 test("[ADR-0018.D4] renders flushed agent messages in order and shows working status", () => {
-  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
   const task = { id: "t1", title: "Work", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status: "running" as const };
   const plan = { session_id: 1, revision: 1, phase: "Build" as const, approved: true, estimated_tokens: null, tasks_started: true, tasks: [task] };
   const events: DbEvent[] = [
@@ -264,7 +264,7 @@ test("[ADR-0018.D4] renders flushed agent messages in order and shows working st
 });
 
 test("[ADR-0018.D4] keeps agent replies on opposite sides of a user message separate", () => {
-  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
   const task = { id: "t1", title: "Work", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status: "review" as const };
   const plan = { session_id: 1, revision: 1, phase: "Review" as const, approved: true, estimated_tokens: null, tasks_started: true, tasks: [task] };
   const event = (id: number, kind: string, text: string): DbEvent => ({ id, session_id: 1, task_id: null, kind, payload: { plan_task_id: "t1", text }, created_at: "2026-11-28" });
@@ -276,7 +276,7 @@ test("[ADR-0018.D4] keeps agent replies on opposite sides of a user message sepa
 });
 
 test("[ADR-0018.D2] running and review chats offer Stop, Send and pending permission controls", () => {
-  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
   const onStop = mock((_taskId: string) => {});
   const onPermission = mock((_taskId: string, _requestId: string, _decision: "allow" | "deny" | "allow_always") => {});
   const events: DbEvent[] = [{ id: 1, session_id: 1, task_id: null, kind: "permission_request", payload: { plan_task_id: "t1", request_id: "r1" }, created_at: "2026-11-28" }];
@@ -305,7 +305,7 @@ test("[ADR-0018.D2] running and review chats offer Stop, Send and pending permis
 });
 
 test("[ADR-0018.D4] the chat renders no bordered agent message box and no workspace path line", () => {
-  const session = { id: 1, title: "Session", workspacePath: "/repo/special/path", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo/special/path", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
   const task = { id: "t1", title: "Work", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status: "review" as const };
   const plan = { session_id: 1, revision: 1, phase: "Review" as const, approved: true, estimated_tokens: null, tasks_started: true, tasks: [task] };
   const events: DbEvent[] = [
@@ -334,7 +334,7 @@ test("[ADR-0018.D4] the chat renders no bordered agent message box and no worksp
 });
 
 test("[ADR-0018.D4] Send button has aria-label Send", () => {
-  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
   const task = { id: "t1", title: "Work", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status: "review" as const };
   const plan = { session_id: 1, revision: 1, phase: "Review" as const, approved: true, estimated_tokens: null, tasks_started: true, tasks: [task] };
   const html = renderToStaticMarkup(
@@ -347,7 +347,7 @@ test("[ADR-0018.D4] Send button has aria-label Send", () => {
 
 test("[ADR-0020.D2] Concise toggle does not call sessionSetConcise on render and calls it with next value on toggle", () => {
   const onToggleConcise = mock(() => {});
-  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
   const tree = Chat({
     session,
     plan: null,
@@ -374,7 +374,7 @@ test("[ADR-0020.D2] Concise toggle does not call sessionSetConcise on render and
 });
 
 test("[ADR-0021.D2] the disabled reason is visually hidden for the empty prompt", () => {
-  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
   const emptyPromptHtml = renderToStaticMarkup(
     <TooltipProvider>
       <Chat session={session} plan={null} busy={false} onApprove={() => {}} onOpenAgent={() => {}} onToggleWorktree={() => {}} onCreateSession={() => {}} prompt="" onPromptChange={() => {}} error={null} loading={false} selectedHarness="omp" />
@@ -391,7 +391,7 @@ test("[ADR-0021.D2] the disabled reason is visually hidden for the empty prompt"
 });
 
 test("[ADR-0018.D4] the status row renders Open agent + Stop for running and review", () => {
-  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
   for (const status of ["running", "review", "completed"] as const) {
     const task = { id: "t1", title: "Work", team: "", harness: "omp", worktree: false, files: [], dependencies: [], estimated_tokens: null, status };
     const plan = { session_id: 1, revision: 1, phase: "Build" as const, approved: true, estimated_tokens: null, tasks_started: true, tasks: [task] };
@@ -415,7 +415,7 @@ test("[ADR-0018.D4] the status row renders Open agent + Stop for running and rev
 });
 
 test("[ADR-0021.D2] combined picker renders harness monogram, honest states, and default model", () => {
-  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: null, team: null, subAgents: [] };
   const harnesses = [
     {
       capabilities: {
@@ -493,7 +493,7 @@ test("[ADR-0021.D2] combined picker renders harness monogram, honest states, and
 });
 
 test("[ADR-0021.D2] harness switch clears session model via callback", () => {
-  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: "sonnet", subAgents: [] };
+  const session = { id: 1, title: "Session", workspacePath: "/repo", optInWorktree: false, conciseReplies: false, model: "sonnet", team: null, subAgents: [] };
   const onSelectHarness = mock((_id: string) => {});
   const harnesses = [
     {

@@ -4,9 +4,10 @@ import { Card, CardContent } from "../../components/ui/card";
 import { listDetectedHarnesses, type DetectedHarness } from "../agent/api";
 import { getAuthStatus, type AuthStatus } from "../auth/api";
 import { checkGitHubStatus, type GhStatus } from "../github/api";
+import { TeamsSection } from "../teams/TeamsSection";
 
 /** @adr ADR-0016.D5 */
-export const settingsSections = ["Harnesses", "GitHub"] as const;
+export const settingsSections = ["Harnesses", "Teams", "GitHub"] as const;
 
 type Section = (typeof settingsSections)[number];
 type HarnessEntry = { harness: DetectedHarness; auth: AuthStatus | null };
@@ -52,7 +53,7 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
         <main className="min-w-0 flex-1 overflow-auto p-6">
           <div className="mx-auto max-w-[calc(880*var(--fw))]">
             <div className="mb-6 flex items-start justify-between gap-4">
-              <div><h1 className="text-xl font-medium">{section}</h1><p className="mt-1 text-sm text-muted-foreground">{section === "Harnesses" ? "Detected agent CLIs and their authentication status." : "Connect your workflow using the GitHub CLI."}</p></div>
+              <div><h1 className="text-xl font-medium">{section}</h1><p className="mt-1 text-sm text-muted-foreground">{section === "Harnesses" ? "Detected agent CLIs and their authentication status." : section === "Teams" ? "Configure roles and ordered model fallbacks for your agents." : "Connect your workflow using the GitHub CLI."}</p></div>
               <Button variant="outline" size="sm" onClick={onClose}>Back to session</Button>
             </div>
             {section === "Harnesses" && <section aria-label="Installed harnesses">
@@ -63,6 +64,7 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
               {harnesses?.length === 0 && <p>No harnesses detected.</p>}
               {harnesses && harnesses.length > 0 && <Card className="gap-0 py-0 shadow-none"><CardContent className="divide-y px-4">{harnesses.map(({ harness, auth }) => <div key={harness.capabilities.harness_id} className="py-3"><div>{harness.capabilities.display_name}</div><div className="text-sm text-muted-foreground"><span>{harness.executable_path}</span> · {harness.capabilities.transport === "acp" ? "ACP" : "Native process"} · Authentication: {auth?.state ?? "unavailable"}</div></div>)}</CardContent></Card>}
             </section>}
+            {section === "Teams" && <TeamsSection />}
             {section === "GitHub" && <section><h2 className="mb-2 font-medium">Connection</h2><p className="mb-4 text-sm text-muted-foreground">BentoBox uses your existing GitHub CLI authentication.</p><Card className="shadow-none"><CardContent>{github === null ? "Checking GitHub CLI…" : <><p>{github.installed ? "GitHub CLI detected" : "GitHub CLI unavailable"}</p><p className="text-sm text-muted-foreground">{github.message}</p>{!github.installed && <p className="text-sm text-muted-foreground">Install the GitHub CLI to use GitHub features.</p>}{github.installed && !github.authenticated && <p className="text-sm text-muted-foreground">Run <code>gh auth login</code> to sign in.</p>}{github.authenticated && github.username && <p className="text-sm text-muted-foreground">Signed in as {github.username}</p>}</>}</CardContent></Card></section>}
           </div>
         </main>

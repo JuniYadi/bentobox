@@ -4,7 +4,7 @@ decisions:
   D1:
     title: Inline per-message routing via @harness/model[:effort] or @team:name overrides the session team
     state: accepted
-    paths: ["src/features/routing/**", "src-tauri/src/routing/**"]
+    paths: ["src/features/routing/**", "src-tauri/src/routing/**", "src/features/session/**", "src-tauri/src/settings/**"]
     protected: false
     use_cases: []
 ---

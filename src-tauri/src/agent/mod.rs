@@ -37,7 +37,7 @@ pub struct Features {
 }
 
 impl Features {
-    const UNKNOWN: Self = Self {
+    pub(crate) const UNKNOWN: Self = Self {
         session_lifecycle: None,
         events: None,
         tool_permissions: None,

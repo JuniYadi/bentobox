@@ -79,7 +79,7 @@ fn version_six_database_upgrades_to_v7_preserving_rows() {
     {
         let store = Store::open(&path).unwrap();
         let conn = store.connection().unwrap();
-        assert_eq!(conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 7);
+        assert_eq!(conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 8);
         let (title, concise, model): (String, bool, Option<String>) = conn.query_row(
             "SELECT title, concise_replies = 1, model FROM sessions WHERE id = 42",
             [],
@@ -88,6 +88,26 @@ fn version_six_database_upgrades_to_v7_preserving_rows() {
         assert_eq!(title, "Existing");
         assert!(concise);
         assert_eq!(model, None);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// [ADR-0011.D1] Upgrading a v7 database preserves existing session data.
+#[test]
+fn version_seven_database_preserves_session() {
+    let root = std::env::temp_dir().join(format!("bentobox-db-v8-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("db.sqlite");
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE sessions (id INTEGER PRIMARY KEY, state TEXT NOT NULL, model TEXT); INSERT INTO sessions VALUES (42, 'active', 'existing-model'); PRAGMA user_version = 7;").unwrap();
+    }
+    {
+        let store = Store::open(&path).unwrap();
+        let conn = store.connection().unwrap();
+        assert_eq!(conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), 8);
+        let row: (String, String, Option<String>) = conn.query_row("SELECT state, model, team FROM sessions WHERE id = 42", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+        assert_eq!(row, ("active".into(), "existing-model".into(), None));
     }
     std::fs::remove_dir_all(root).unwrap();
 }

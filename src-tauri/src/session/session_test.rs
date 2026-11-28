@@ -12,7 +12,7 @@ fn store() -> (Store, std::path::PathBuf) {
     (store, root)
 }
 fn task(id: &str, dependencies: &[&str]) -> PlanTask {
-    PlanTask { id: id.into(), title: id.into(), team: "team".into(), harness: "harness".into(), model: None, worktree: true, files: vec![], dependencies: dependencies.iter().map(|s| (*s).into()).collect(), estimated_tokens: Some(100), status: String::new() }
+    PlanTask { id: id.into(), title: id.into(), team: "team".into(), harness: "harness".into(), model: None, worktree: true, files: vec![], dependencies: dependencies.iter().map(|s| (*s).into()).collect(), estimated_tokens: Some(100), status: String::new(), pinned: false }
 }
 fn cleanup(root: &std::path::Path) { std::fs::remove_dir_all(root).unwrap(); }
 
@@ -22,6 +22,14 @@ fn legacy_plan_without_files_deserializes() {
     let raw = r#"{"session_id":1,"revision":1,"phase":"Plan","approved":false,"estimated_tokens":null,"tasks_started":false,"tasks":[{"id":"a","title":"Task","team":"team","harness":"harness","worktree":true,"dependencies":[],"estimated_tokens":null,"status":"queued"}]}"#;
     let plan: Plan = serde_json::from_str(raw).unwrap();
     assert!(plan.tasks[0].files.is_empty());
+}
+
+// [ADR-0010.D1] Plan task JSON without pinned deserializes to pinned = false.
+#[test]
+fn legacy_plan_without_pinned_deserializes() {
+    let json = r#"{"id":"t1","title":"Task 1","team":"","harness":"h1","worktree":false,"files":[],"dependencies":[],"status":"queued"}"#;
+    let task: PlanTask = serde_json::from_str(json).unwrap();
+    assert!(!task.pinned);
 }
 
 #[test]
@@ -331,5 +339,49 @@ fn adr0021_model_setting_persists_across_reopen_and_validates_session_id() {
     assert_eq!(reopened.session_model(summary.id).unwrap(), None);
     assert!(reopened.set_session_model(99999, Some("claude-sonnet-4-6")).is_err());
     assert!(reopened.session_model(99999).is_err());
+    cleanup(&root);
+}
+
+// [ADR-0011.D1] Session team setting persists across reopen, allows clearing, and rejects unknown sessions or teams.
+#[test]
+fn adr0011_session_team_persists_across_reopen_and_validates() {
+    let (store, root) = store();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::process::Command::new("git").args(["init", "-q"]).current_dir(&repo).status().unwrap();
+    let (repo_root, name) = crate::project::repository_root(&repo).unwrap();
+    let project = store.add_project(&name, &repo_root).unwrap();
+    let summary = store.create_named_session("Test Session", project.id, "/workspace", false).unwrap();
+    assert_eq!(summary.team, None);
+    assert_eq!(store.session_team(summary.id).unwrap(), None);
+
+    // Insert a valid team into the database for testing
+    {
+        let conn = store.connection().unwrap();
+        conn.execute("INSERT INTO teams (id, name, role, is_default) VALUES ('team-1', 'Alpha', 'orchestrator', 1)", []).unwrap();
+    }
+
+    // Unknown team is rejected
+    assert!(store.set_session_team(summary.id, Some("nonexistent")).is_err());
+
+    // Valid team succeeds and is returned in session_team and list_sessions
+    store.set_session_team(summary.id, Some("team-1")).unwrap();
+    assert_eq!(store.session_team(summary.id).unwrap(), Some("team-1".into()));
+
+    let list = store.list_sessions().unwrap();
+    let listed = list.iter().find(|s| s.id == summary.id).unwrap();
+    assert_eq!(listed.team, Some("team-1".into()));
+
+    drop(store);
+    let reopened = Store::open(root.join("db.sqlite")).unwrap();
+    assert_eq!(reopened.session_team(summary.id).unwrap(), Some("team-1".into()));
+
+    // Clearing team to None
+    reopened.set_session_team(summary.id, None).unwrap();
+    assert_eq!(reopened.session_team(summary.id).unwrap(), None);
+
+    // Unknown session error
+    assert!(reopened.set_session_team(99999, Some("team-1")).is_err());
+    assert!(reopened.session_team(99999).is_err());
     cleanup(&root);
 }
