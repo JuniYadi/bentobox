@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="bf-bg" x1="128" y1="8" x2="128" y2="248" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e8e8ed"/>
+    </linearGradient>
+    <linearGradient id="bf-dark" x1="38" y1="38" x2="122" y2="218" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#27272a"/>
+      <stop offset="100%" stop-color="#09090b"/>
+    </linearGradient>
+    <filter id="bf-sh" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#09090b" flood-opacity="0.11"/>
+    </filter>
+  </defs>
+  <!-- Ceramic Light squircle -->
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#bf-bg)" stroke="#d4d4d8" stroke-width="3"/>
+  <rect x="11" y="11" width="234" height="234" rx="51" fill="none" stroke="#ffffff" stroke-width="2"/>
+  <!-- Left obsidian compartment: isolated git worktree branch -->
+  <rect x="38" y="38" width="84" height="180" rx="22" fill="url(#bf-dark)" filter="url(#bf-sh)"/>
+  <g stroke="#fafafa" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="68" y1="102" x2="68" y2="154"/>
+    <path d="M68 152C68 134 94 134 94 114"/>
+    <circle cx="68" cy="94" r="8" fill="#18181b"/>
+    <circle cx="68" cy="162" r="8" fill="#18181b"/>
+    <circle cx="94" cy="106" r="8" fill="#22c55e" stroke="#22c55e"/>
+  </g>
+  <!-- Top-right crisp white compartment: unified agent terminal prompt -->
+  <rect x="136" y="38" width="82" height="83" rx="22" fill="#ffffff" stroke="#d4d4d8" stroke-width="2.5" filter="url(#bf-sh)"/>
+  <path d="M157 70L170 80L157 90" stroke="#18181b" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="178" y1="90" x2="196" y2="90" stroke="#18181b" stroke-width="6.5" stroke-linecap="round"/>
+  <!-- Bottom-right soft zinc compartment: 2x2 multi-agent coordination grid -->
+  <rect x="136" y="135" width="82" height="83" rx="22" fill="#f4f4f5" stroke="#d4d4d8" stroke-width="2.5"/>
+  <circle cx="166" cy="165.5" r="6.5" fill="#18181b"/>
+  <circle cx="188" cy="165.5" r="6.5" fill="#18181b"/>
+  <circle cx="166" cy="187.5" r="6.5" fill="#18181b"/>
+  <circle cx="188" cy="187.5" r="6.5" fill="#a1a1aa"/>
+</svg>
