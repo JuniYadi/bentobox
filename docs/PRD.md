@@ -55,6 +55,11 @@ A capability registry shall record per agent and detected version: transport (AC
 | OpenCode | ACP where supported; otherwise OpenCode native command integration | Preserve its provider/model and permission behavior; show unsupported operations explicitly. |
 
 The table describes integration strategies, not a claim that every named agent currently ships an ACP server or exposes all listed functions. Before implementation, validate current official docs and release/version support. The app must not bundle an undocumented protocol shim while presenting it as native ACP.
+**Running agents:**
+- An approved plan task starts an ACP agent in its own worktree, with live progress in the agent detail view.
+- Users can allow or deny each permission request, stop a running agent, and queue a steering message; Pause and Take over are not part of this requirement.
+- Users can start a single-task plan for a chosen harness from the composer.
+- Harnesses in scope are Oh My Pi, OpenCode, Claude Code, and Codex; Claude Code and Codex use adapters.
 
 ### 4.2 Usage and quota semantics
 
@@ -118,6 +123,7 @@ Package desktop builds using Tauri's supported signing/notarization and platform
 9. Authentication stays within documented agent/provider flows; secrets are not exposed in logs or cross-agent task handoffs.
 10. Users can inspect outputs/diffs and no worktree cleanup, merge, or destructive repository action silently removes user data.
 11. Distribution documentation identifies supported OS/agent versions, installation prerequisites, signing/update approach, and third-party dependencies.
+12. A task started from an approved plan reaches Review with its events visible, and Stop ends it.
 
 ## 6. Open questions / validation before build
 
