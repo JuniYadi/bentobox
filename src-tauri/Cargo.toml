@@ -33,6 +33,7 @@ uuid = { version = "1", features = ["v4"] }
 libc = "0.2"
 
 
+# @adr ADR-0015.D1
 # Smaller, faster-linking dev builds: keep file:line backtraces for our crate,
 # drop debug info for dependencies (the bulk of target/debug).
 [profile.dev]

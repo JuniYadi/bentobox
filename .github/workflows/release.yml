@@ -1,3 +1,4 @@
+# @adr ADR-0013.D1
 name: release
 
 # Builds the Tauri desktop app and attaches the bundles to a GitHub Release.

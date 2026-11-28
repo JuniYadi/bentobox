@@ -7,6 +7,7 @@ This template should help get you started developing with Tauri, React and Types
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
 
 ## Local Rust builds
+<!-- @adr ADR-0015.D2 -->
 
 Share one Cargo build folder across all git worktrees (ADR-0015.D2), so each worktree doesn't rebuild Tauri into its own multi-GB `src-tauri/target`:
 

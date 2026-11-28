@@ -2,7 +2,14 @@
   "scopes": [],
   "adrDir": "docs/adr",
   "prdPaths": ["docs/PRD.md"],
-  "governed": ["src/**/*.{ts,tsx,js,jsx,mjs}", "src-tauri/src/**/*.rs"],
+  "governed": [
+    "src/**/*.{ts,tsx,js,jsx,mjs}",
+    "src-tauri/src/**/*.rs",
+    ".github/workflows/release.yml",
+    ".github/dependabot.yml",
+    "src-tauri/Cargo.toml",
+    "README.md"
+  ],
   "exempt": [
     "**/*.d.ts",
     "**/generated/**",
