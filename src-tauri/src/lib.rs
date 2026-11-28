@@ -7,6 +7,7 @@ pub mod workspace;
 pub mod usage;
 pub mod handoff;
 pub mod session;
+pub mod settings;
 
 pub mod project;
 #[tauri::command]
@@ -45,6 +46,9 @@ pub fn run() {
             project::project_sessions,
             project::project_unassigned_sessions,
             project::project_tree,
+            settings::settings_get_all,
+            settings::settings_get,
+            settings::settings_set,
             session::session_propose_plan,
             session::session_revise_plan,
             session::session_approve_plan,

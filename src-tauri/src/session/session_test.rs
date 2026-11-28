@@ -9,9 +9,17 @@ fn store() -> (Store, std::path::PathBuf) {
     (store, root)
 }
 fn task(id: &str, dependencies: &[&str]) -> PlanTask {
-    PlanTask { id: id.into(), title: id.into(), team: "team".into(), harness: "harness".into(), worktree: true, dependencies: dependencies.iter().map(|s| (*s).into()).collect(), estimated_tokens: Some(100), status: String::new() }
+    PlanTask { id: id.into(), title: id.into(), team: "team".into(), harness: "harness".into(), worktree: true, files: vec![], dependencies: dependencies.iter().map(|s| (*s).into()).collect(), estimated_tokens: Some(100), status: String::new() }
 }
 fn cleanup(root: &std::path::Path) { std::fs::remove_dir_all(root).unwrap(); }
+
+#[test]
+fn legacy_plan_without_files_deserializes() {
+    // [ADR-0016.D3] Stored plans created before file lists remain readable.
+    let raw = r#"{"session_id":1,"revision":1,"phase":"Plan","approved":false,"estimated_tokens":null,"tasks_started":false,"tasks":[{"id":"a","title":"Task","team":"team","harness":"harness","worktree":true,"dependencies":[],"estimated_tokens":null,"status":"queued"}]}"#;
+    let plan: Plan = serde_json::from_str(raw).unwrap();
+    assert!(plan.tasks[0].files.is_empty());
+}
 
 #[test]
 fn approval_gate_and_revision_reset_persist() {

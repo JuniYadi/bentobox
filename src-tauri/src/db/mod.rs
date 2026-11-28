@@ -9,7 +9,7 @@ use std::{
 };
 use tauri::State;
 
-const LATEST_SCHEMA_VERSION: i64 = 3;
+const LATEST_SCHEMA_VERSION: i64 = 4;
 
 #[derive(Clone)]
 pub struct Store(std::sync::Arc<Mutex<Connection>>);
@@ -75,6 +75,12 @@ impl Store {
                 }
             }
             tx.pragma_update(None, "user_version", 3).map_err(|e| e.to_string())?;
+        }
+        if version < 4 {
+            tx.execute_batch(
+                "CREATE TABLE settings (key TEXT PRIMARY KEY, value_type TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
+                 PRAGMA user_version = 4;"
+            ).map_err(|e| e.to_string())?;
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(Self(std::sync::Arc::new(Mutex::new(conn))))
