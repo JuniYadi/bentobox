@@ -75,6 +75,7 @@ pub fn run() {
             session::session_set_concise,
             session::session_set_model,
             session::session_set_team,
+            runner::runner_running_count,
             teams::teams_list,
             teams::teams_upsert,
             teams::teams_delete,

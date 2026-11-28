@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify-version:
@@ -43,6 +43,8 @@ jobs:
     needs: verify-version
     # Run on dispatch too, where verify-version is skipped.
     if: ${{ !failure() && !cancelled() }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +79,31 @@ jobs:
             exit 1
           fi
 
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      # The two signing steps come after every third-party setup action and dependency install,
+      # so those never see the certificates or notarization credentials.
+
       # @adr ADR-0013.D2
       # The Tauri bundler imports the certificate into a temporary keychain itself. It treats a
       # variable that is set but empty as present, so the APPLE_* values are exported only when
@@ -96,14 +123,16 @@ jobs:
             echo "::warning::APPLE_CERTIFICATE is not set. This macOS bundle is built unsigned and not notarized."
             exit 0
           fi
-          delimiter="EOF_${RANDOM}${RANDOM}"
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-            value="${!name}"
-            if [ -z "$value" ]; then
+          names="APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID"
+          for name in $names; do
+            if [ -z "${!name}" ]; then
               echo "::error::$name is required when APPLE_CERTIFICATE is set."
               exit 1
             fi
-            printf '%s<<%s\n%s\n%s\n' "$name" "$delimiter" "$value" "$delimiter" >> "$GITHUB_ENV"
+          done
+          delimiter="EOF_$(openssl rand -hex 16)"
+          for name in $names; do
+            printf '%s<<%s\n%s\n%s\n' "$name" "$delimiter" "${!name}" "$delimiter" >> "$GITHUB_ENV"
           done
 
       # @adr ADR-0013.D3
@@ -136,30 +165,9 @@ jobs:
           } } }
           $config | ConvertTo-Json -Depth 5 | Set-Content -Path src-tauri/tauri.windows.conf.json
 
-      - name: Install Linux system dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-          key: ${{ matrix.target }}
-
-      - name: Install frontend dependencies
-        run: bun install --frozen-lockfile
-
       # @adr ADR-0013.D4
-      - uses: tauri-apps/tauri-action@v1
+      # Pinned to the v1.0.0 commit because this step receives every signing secret.
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -168,30 +176,33 @@ jobs:
           tauriScript: bun run tauri
           args: --target ${{ matrix.target }}
           releaseId: ${{ github.event.release.id }}
-          # With a tag, latest.json points at this release's assets instead of releases/latest.
-          tagName: ${{ github.event.release.tag_name }}
           uploadUpdaterJson: ${{ github.event_name == 'release' }}
           uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
           retryAttempts: 1
 
   # @adr ADR-0013.D4
   # Every matrix job downloads latest.json, adds its platform and uploads it again, so two jobs
-  # finishing together can drop each other's entry. Fail the run when a platform is missing;
-  # re-running the failed build job adds it back.
+  # finishing together can drop each other's entry. Fail the run when the manifest is incomplete.
   verify-updater-manifest:
-    name: Verify latest.json covers every platform
+    name: Verify latest.json is complete
     needs: build
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
-      - name: Check latest.json platforms
+      - name: Check latest.json
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.release.tag_name }}
         run: |
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --output latest.json
-          missing=$(jq -r '["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"] - (.platforms | keys) | join(", ")' latest.json)
-          if [ -n "$missing" ]; then
-            echo "::error::latest.json has no entry for: $missing. Re-run the failed build jobs."
+          problems=$(jq -r --arg want "${TAG#v}" '
+            (["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"] - (.platforms | keys)) as $missing
+            | [.platforms | to_entries[] | select((.value.signature // "") == "") | .key] as $unsigned
+            | [ (if ($missing | length) > 0 then "missing platforms: " + ($missing | join(", ")) else empty end),
+                (if ($unsigned | length) > 0 then "empty signature for: " + ($unsigned | join(", ")) else empty end),
+                (if .version != $want then "version " + .version + " does not match tag " + $want else empty end) ]
+            | join("; ")' latest.json)
+          if [ -n "$problems" ]; then
+            echo "::error::latest.json is incomplete ($problems). Re-run the build job of the affected platform from the Actions UI; this check re-runs with it."
             exit 1
           fi

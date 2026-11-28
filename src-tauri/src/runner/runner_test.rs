@@ -1722,3 +1722,12 @@ fn unknown_team_does_not_launch_task_harness() {
         assert!(calls.lock().unwrap().is_empty());
     });
 }
+
+// [ADR-0013.D4] The updater refuses to restart the app while agent processes are alive.
+#[test]
+fn running_count_tracks_live_tasks_for_the_updater_guard() {
+    let (runner, _session, _control, _stop, _task) = setup();
+    assert_eq!(runner.running_count().unwrap(), 1);
+    runner.registry.lock().unwrap().running.clear();
+    assert_eq!(runner.running_count().unwrap(), 0);
+}

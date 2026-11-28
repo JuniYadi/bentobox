@@ -11,7 +11,7 @@ type State =
   | { phase: "current" }
   | { phase: "available"; update: Update }
   | { phase: "installing"; progress: DownloadProgress }
-  | { phase: "error"; message: string };
+  | { phase: "error"; during: "check" | "install"; message: string };
 
 /** @adr ADR-0013.D4 */
 export function UpdatesSection() {
@@ -24,7 +24,7 @@ export function UpdatesSection() {
       const result = await checkForUpdate();
       setState(result.status === "available" ? { phase: "available", update: result.update } : { phase: "current" });
     } catch (error) {
-      setState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
+      setState({ phase: "error", during: "check", message: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -33,7 +33,7 @@ export function UpdatesSection() {
     try {
       await installUpdate(update, (progress) => setState({ phase: "installing", progress }));
     } catch (error) {
-      setState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
+      setState({ phase: "error", during: "install", message: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -50,7 +50,7 @@ export function UpdatesSection() {
             {state.phase === "current" && "BentoBox is up to date."}
             {state.phase === "available" && `Version ${state.update.version} is available (you have ${state.update.currentVersion}).`}
             {state.phase === "installing" && (percent === null ? "Downloading update…" : `Downloading update… ${percent}%`)}
-            {state.phase === "error" && "The update check failed."}</p>
+            {state.phase === "error" && (state.during === "check" ? "The update check failed." : "The update did not install.")}</p>
           {state.phase === "available" && state.update.body && <p className="whitespace-pre-wrap text-sm text-muted-foreground">{state.update.body}</p>}
           {state.phase === "installing" && percent !== null && <Progress value={percent} aria-label="Update download progress" />}
           {state.phase === "error" && <p role="alert" className="text-sm text-muted-foreground">{state.message}</p>}
@@ -58,7 +58,7 @@ export function UpdatesSection() {
             <Button variant="outline" size="sm" disabled={busy} onClick={() => void handleCheck()}>Check for updates</Button>
             {state.phase === "available" && <Button size="sm" onClick={() => void handleInstall(state.update)}>Install and restart</Button>}
           </div>
-          {state.phase === "available" && <p className="text-sm text-muted-foreground">Installing restarts BentoBox. Stop running agents first.</p>}
+          {state.phase === "available" && <p className="text-sm text-muted-foreground">Installing restarts BentoBox. It is refused while agent tasks are running.</p>}
         </CardContent>
       </Card>
     </section>

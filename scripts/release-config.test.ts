@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -59,6 +59,21 @@ describe("[ADR-0015.D1] dev build footprint", () => {
 const workflow = Bun.YAML.parse(read(".github/workflows/release.yml")) as Record<string, any>;
 const buildSteps = workflow.jobs.build.steps as Array<Record<string, any>>;
 const stepNamed = (name: string) => buildSteps.find((step) => step.name === name)!;
+const stepIndex = (predicate: (step: Record<string, any>) => boolean) => buildSteps.findIndex(predicate);
+
+/** Parses the `NAME<<delimiter` blocks the macOS step appends to $GITHUB_ENV, the way the runner does. */
+function parseGithubEnv(text: string) {
+  const parsed: Record<string, string> = {};
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const header = lines[i].match(/^([A-Z_]+)<<(.+)$/);
+    if (!header) continue;
+    const value: string[] = [];
+    for (i++; i < lines.length && lines[i] !== header[2]; i++) value.push(lines[i]);
+    parsed[header[1]] = value.join("\n");
+  }
+  return parsed;
+}
 
 describe("[ADR-0013.D2] macOS signing step", () => {
   const appleNames = ["APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD", "APPLE_SIGNING_IDENTITY", "APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID"];
@@ -84,19 +99,20 @@ describe("[ADR-0013.D2] macOS signing step", () => {
     expect(result.exported).toBe("");
   });
 
-  test("with a certificate it exports every variable, including a multi-line value", () => {
+  test("with a certificate every value reaches GITHUB_ENV intact, including multi-line values and values that look like env headers", () => {
     const values = Object.fromEntries(appleNames.map((name) => [name, `${name.toLowerCase()}-value`]));
-    values.APPLE_CERTIFICATE = "line-one\nline-two";
+    values.APPLE_CERTIFICATE = "line-one\nline-two\nAPPLE_ID<<fake";
+    values.APPLE_PASSWORD = "p@ss=word<<EOF";
     const result = runStep(values);
     expect(result.exitCode).toBe(0);
-    for (const name of appleNames) expect(result.exported).toContain(`${name}<<`);
-    expect(result.exported).toContain("line-one\nline-two");
+    expect(parseGithubEnv(result.exported)).toEqual(values);
   });
 
   test("a certificate without the notarization credentials fails the build instead of shipping a half-signed app", () => {
     const result = runStep({ APPLE_CERTIFICATE: "cert", APPLE_CERTIFICATE_PASSWORD: "pw" });
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain("::error::APPLE_SIGNING_IDENTITY is required");
+    expect(result.exported).toBe("");
   });
 });
 
@@ -109,9 +125,31 @@ describe("[ADR-0013.D3] Windows signing step", () => {
     expect(step.env.WINDOWS_CERTIFICATE_PASSWORD).toBe("${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}");
   });
 
-  test("signing settings reach Tauri through a CI-only platform config, not the committed tauri.conf.json", () => {
-    expect(step.run).toContain("src-tauri/tauri.windows.conf.json");
+  test("signing settings stay out of the committed tauri.conf.json, so unsigned local and Linux/macOS builds are unaffected", () => {
     expect(json("src-tauri/tauri.conf.json").bundle.windows).toBeUndefined();
+  });
+});
+
+describe("[ADR-0013.D2][ADR-0013.D3] signing secrets exposure", () => {
+  test("both signing steps run after every third-party action and dependency install, right before the build", () => {
+    const mac = stepIndex((step) => step.name === "Enable macOS signing and notarization");
+    const windows = stepIndex((step) => step.name === "Enable Windows Authenticode signing");
+    const build = stepIndex((step) => String(step.uses).startsWith("tauri-apps/tauri-action"));
+    const lastSetup = Math.max(...buildSteps.map((step, index) => (index !== mac && index !== windows && index !== build && step.uses !== "actions/checkout@v7" ? index : -1)));
+    expect(mac).toBeGreaterThan(lastSetup);
+    expect(windows).toBeGreaterThan(lastSetup);
+    expect(build).toBe(Math.max(mac, windows) + 1);
+  });
+
+  test("the workflow token is read-only by default and only the build job may write the release", () => {
+    expect(workflow.permissions).toEqual({ contents: "read" });
+    expect(workflow.jobs.build.permissions).toEqual({ contents: "write" });
+    expect(workflow.jobs["verify-updater-manifest"].permissions).toBeUndefined();
+  });
+
+  test("the action that receives every signing secret is pinned to a commit", () => {
+    const action = buildSteps.find((step) => String(step.uses).startsWith("tauri-apps/tauri-action"))!;
+    expect(String(action.uses)).toMatch(/^tauri-apps\/tauri-action@[0-9a-f]{40}$/);
   });
 });
 
@@ -131,25 +169,73 @@ describe("[ADR-0013.D4] signed updates", () => {
     expect(permissions.filter((permission) => /^(updater|process):/.test(permission)).length).toBe(3);
   });
 
-  test("every build signs updater bundles with the private key, and a release uploads latest.json", () => {
+  test("every build signs updater bundles with the private key, and only a release run uploads latest.json", () => {
     const action = buildSteps.find((candidate) => String(candidate.uses).startsWith("tauri-apps/tauri-action"))!;
     expect(action.env.TAURI_SIGNING_PRIVATE_KEY).toBe("${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}");
     expect(action.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD).toBe("${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}");
     expect(action.with.uploadUpdaterJson).toBe("${{ github.event_name == 'release' }}");
-    expect(action.with.tagName).toBe("${{ github.event.release.tag_name }}");
-  });
-
-  test("a release run fails when latest.json misses a platform the build matrix produces", () => {
-    const job = workflow.jobs["verify-updater-manifest"];
-    expect(job.needs).toBe("build");
-    expect(job.if).toBe("github.event_name == 'release'");
-    const script = job.steps[0].run as string;
-    for (const platform of ["darwin-aarch64", "darwin-x86_64", "linux-x86_64", "windows-x86_64"]) expect(script).toContain(platform);
   });
 
   test("both plugins are desktop-only dependencies", () => {
     const cargo = Bun.TOML.parse(read("src-tauri/Cargo.toml")) as Record<string, any>;
     const desktop = cargo.target['cfg(any(target_os = "macos", windows, target_os = "linux"))'].dependencies;
     expect(Object.keys(desktop).sort()).toEqual(["tauri-plugin-process", "tauri-plugin-updater"]);
+  });
+});
+
+describe("[ADR-0013.D4] latest.json verification job", () => {
+  const job = workflow.jobs["verify-updater-manifest"];
+  const signed = (url: string) => ({ signature: "dW50cnVzdGVk", url });
+  const complete = {
+    version: "0.0.2",
+    platforms: {
+      "darwin-aarch64": signed("a"),
+      "darwin-x86_64": signed("b"),
+      "linux-x86_64": signed("c"),
+      "windows-x86_64": signed("d"),
+    },
+  };
+
+  /** Runs the job's script with a fake `gh` that "downloads" the given manifest. */
+  function verify(manifest: unknown, tag = "v0.0.2") {
+    const dir = mkdtempSync(join(tmpdir(), "verify-"));
+    const fixture = join(dir, "fixture.json");
+    writeFileSync(fixture, JSON.stringify(manifest));
+    const gh = join(dir, "gh");
+    writeFileSync(gh, '#!/usr/bin/env bash\nwhile [ $# -gt 0 ]; do if [ "$1" = "--output" ]; then cp "$FIXTURE" "$2"; fi; shift; done\n');
+    chmodSync(gh, 0o755);
+    const result = Bun.spawnSync(["bash", "-c", job.steps[0].run], {
+      cwd: dir,
+      env: { PATH: `${dir}:${process.env.PATH}`, FIXTURE: fixture, TAG: tag, GITHUB_REPOSITORY: "JuniYadi/bentobox", GH_TOKEN: "unused" },
+    });
+    return { exitCode: result.exitCode, stdout: result.stdout.toString() };
+  }
+
+  test("runs only for releases, after every build job", () => {
+    expect(job.needs).toBe("build");
+    expect(job.if).toBe("github.event_name == 'release'");
+  });
+
+  test("a complete, signed manifest for the tagged version passes", () => {
+    expect(verify(complete).exitCode).toBe(0);
+  });
+
+  test("a manifest that lost a platform to the upload race fails and names it", () => {
+    const { "windows-x86_64": _lost, ...platforms } = complete.platforms;
+    const result = verify({ ...complete, platforms });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("missing platforms: windows-x86_64");
+  });
+
+  test("an entry with an empty signature fails", () => {
+    const result = verify({ ...complete, platforms: { ...complete.platforms, "linux-x86_64": { signature: "", url: "c" } } });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("empty signature for: linux-x86_64");
+  });
+
+  test("a manifest for a different version than the tag fails", () => {
+    const result = verify({ ...complete, version: "0.0.1" });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("version 0.0.1 does not match tag 0.0.2");
   });
 });

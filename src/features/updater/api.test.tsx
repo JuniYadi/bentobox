@@ -4,7 +4,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 const calls: string[] = [];
 let nextCheck: unknown = null;
 let failInstall = false;
+let runningAgents = 0;
 
+mock.module("@tauri-apps/api/core", () => ({
+  invoke: (cmd: string) => {
+    calls.push(cmd);
+    return Promise.resolve(cmd === "runner_running_count" ? runningAgents : undefined);
+  },
+}));
 mock.module("@tauri-apps/plugin-updater", () => ({
   check: () => {
     calls.push("check");
@@ -40,10 +47,11 @@ beforeEach(() => {
   calls.length = 0;
   nextCheck = null;
   failInstall = false;
+  runningAgents = 0;
 });
 
 describe("[ADR-0013.D4] updater", () => {
-  test("rendering Updates does not contact the update server; only the button does", () => {
+  test("rendering Updates starts in the idle state and sends no request", () => {
     const html = renderToStaticMarkup(<UpdatesSection />);
     expect(html).toContain("Check for updates");
     expect(html).toContain("No check has run yet.");
@@ -72,13 +80,19 @@ describe("[ADR-0013.D4] updater", () => {
     ]);
     await installUpdate(update as never, (progress) => seen.push(progress));
     expect(seen[seen.length - 1]).toEqual({ downloaded: 100, total: 100 });
-    expect(calls).toEqual(["download", "installed", "relaunch"]);
+    expect(calls).toEqual(["runner_running_count", "download", "installed", "relaunch"]);
   });
 
   test("a failed install never restarts the app", async () => {
     failInstall = true;
     await expect(installUpdate(fakeUpdate([]) as never, () => {})).rejects.toThrow("signature verification failed");
-    expect(calls).toEqual(["download"]);
+    expect(calls).toEqual(["runner_running_count", "download"]);
+  });
+
+  test("install is refused while agent tasks run, before anything is downloaded", async () => {
+    runningAgents = 2;
+    await expect(installUpdate(fakeUpdate([]) as never, () => {})).rejects.toThrow("2 agent tasks are still running");
+    expect(calls).toEqual(["runner_running_count"]);
   });
 
   test("a download without a content length keeps total unknown", () => {
