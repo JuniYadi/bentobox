@@ -59,7 +59,7 @@ D1: **Runner.** A new `runner` module in the Rust backend starts approved plan t
   - It moves the task `queued -> running` through the existing `session_task_transition`.
   - It creates the worktree, spawns the harness, and runs `initialize`, `session/new` with the absolute worktree path as `cwd` and `mcpServers: []`, then `session/prompt`.
   - The prompt is plain text built from the plan task: the title as the goal, the task's files if any (each as a path relative to the worktree), and the absolute worktree path. A section with no content is left out; the runner never writes placeholder text such as 'None'. The ADR-0007 renderer is not used, because it requires `non_goals`, `constraints` and `acceptance_commands` that a plan task does not carry; ADR-0007 is unchanged.
-- **Client.** ACP is spoken with the official `agent-client-protocol` crate, with tokio added to bridge `tokio::process` stdio. No hand-rolled JSON-RPC.
+- **Client.** ACP is spoken with the official `agent-client-protocol` crate; its `process` feature spawns the agent over stdio (`AcpAgent`) and handles stdin close and child shutdown, so BentoBox writes no JSON-RPC framing and no stdio bridge. The crate has no tokio dependency and runs inside Tauri's existing async runtime. No hand-rolled JSON-RPC.
 - **Launch table.** The Capability Registry gains the launch command per harness from the table above. `omp` and `claude` and `codex` move to transport `Acp`. `pi` stays `NativeProcess` and is not runnable. After `initialize`, the registry records the `agentCapabilities` the agent actually returned. It does not guess features (ADR-0001.D1).
 - **Adapters.** Claude and Codex run through `npx`. They count as available only when `npx` resolves, and the UI says that an adapter downloads on first use.
 - **Auth.** Auth stays agent-owned (ADR-0004). If `initialize` lists auth methods and the agent cannot start without them, the task fails with the agent's message and `payload.reason = "authentication_required"`. BentoBox does not store credentials.
@@ -83,7 +83,7 @@ D1: **Runner.** A new `runner` module in the Rust backend starts approved plan t
 D2: **Controls.** The agent detail controls become real where ACP supports them.
 - **Allow, Deny.** A `session/request_permission` becomes a `permission_request` event, and the agent's turn stays blocked. Allow and Deny send the matching `allow_once` or `reject_once` option. If an agent offers no such option, the control stays disabled with that reason. The reader loop never waits on the UI.
 - **Stop.** Sends `session/cancel` and answers every pending permission with `cancelled`, as the spec requires. If the process has not ended after a grace period, it is killed. The task becomes `cancelled`.
-- **Steer.** ACP forbids two prompts at once on a session, so a steering message is queued and sent as the next `session/prompt` when the current turn ends. The composer says it is queued.
+- **Steer.** ACP forbids two prompts at once on a session, so a steering message is queued and sent as the next `session/prompt` when the current turn ends. The composer says it is queued. `omp` advertises `_meta.steering.supported`, which a later decision may use for mid-turn steering; this ADR queues the message as the next prompt for every harness.
 - **Pause and Take over.** ACP has no pause method, and Take over (ADR-0010) is a different editing flow. Both stay disabled with their reason.
 - **Honest limit.** Agents write files themselves, so BentoBox cannot enforce ADR-0010's "sub-agent writes only inside its worktree". It sets `cwd` to the worktree and relies on the agent's own permission prompts. This is a gap against ADR-0010.D1's backend-enforced boundary and is stated in the UI help text.
 
@@ -103,9 +103,9 @@ D4: **One-task plan from the composer.** ADR-0010's Consequences already say sma
 - **Auto-complete tasks at `end_turn`.** Rejected: ADR-0010 has a Review phase.
 
 ## Consequences
-- **Dependencies.** `agent-client-protocol`, tokio (process, io-util, sync) and `tokio-util` compat. The crate needs Rust 1.88 or newer; the repo's toolchain must be checked before building.
+- **Dependencies.** `agent-client-protocol` pinned to `=5.6.1` with the `process` feature, which brings async-process and async-io. The crate needs Rust 1.88 or newer; the installed toolchain is 1.100 and the repo is on edition 2024. Tokio is added only if the runner needs timers or channels that Tauri's async_runtime does not give.
 - **Prompt text.** The prompt is plain text built from the plan task; a one-task plan from the composer with no files sends the title and worktree path only; richer handoffs (non-goals, constraints, acceptance commands) need a decision that gives plan tasks those fields, and are out of scope here.
-- **Unverified.** Adapter behaviour for Claude and Codex on this machine, `omp acp` and `opencode acp` versions, and whether each agent sends diff updates for `file_changed`.
+- **Unverified.** A handshake (`initialize` and `session/new`, no prompt) was run against omp 19.2.1 with the crate and worked; Claude, Codex and opencode, `session/prompt`, permission requests and cancel are not yet verified at runtime.
 - **Out of scope.** ACP orchestrator and plan generation, running acceptance commands, review completion, Pause, Take over, teams and fallback (ADR-0011), routing (ADR-0012), `session/load` resume, any user setting for concurrency, richer handoffs (see Prompt text).
 - **Tests must prove:**
   - with a scripted fake ACP agent (a test binary speaking newline-delimited JSON), the handshake runs in order and the prompt reaches `end_turn`
