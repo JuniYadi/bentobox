@@ -20,10 +20,11 @@ impl Store {
         self.connection()?.query_row("SELECT plan FROM session_plans WHERE session_id = ?1", [session_id], |row| row.get(0)).optional().map_err(|e| e.to_string())
     }
 
-    pub(crate) fn create_named_session(&self, title: &str, workspace_path: &str, opt_in_worktree: bool) -> Result<SessionSummary, String> {
+    pub(crate) fn create_named_session(&self, title: &str, project_id: i64, workspace_path: &str, opt_in_worktree: bool) -> Result<SessionSummary, String> {
         let conn = self.connection()?;
-        conn.query_row("INSERT INTO sessions (state, title, workspace_path, opt_in_worktree, created_at) VALUES ('active', ?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING id, title, workspace_path, opt_in_worktree, created_at", params![title, workspace_path, opt_in_worktree], session_summary).map_err(|e| e.to_string())
+        conn.query_row("INSERT INTO sessions (state, title, project_id, workspace_path, opt_in_worktree, created_at) VALUES ('active', ?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING id, title, workspace_path, opt_in_worktree, created_at", params![title, project_id, workspace_path, opt_in_worktree], session_summary).map_err(|e| e.to_string())
     }
+
 
     pub(crate) fn list_sessions(&self) -> Result<Vec<SessionSummary>, String> {
         let conn = self.connection()?;

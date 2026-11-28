@@ -159,8 +159,13 @@ fn token_estimates_are_summed_only_when_known() {
 fn sessions_persist_metadata_and_are_listed_newest_first() {
     // [ADR-0010.D1] Session identity and workspace preferences survive reopening.
     let (store, root) = store();
-    let first = store.create_named_session("First", "/one", false).unwrap();
-    let second = store.create_named_session("Second", "/two", true).unwrap();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::process::Command::new("git").args(["init", "-q"]).current_dir(&repo).status().unwrap();
+    let (repo_root, name) = crate::project::repository_root(&repo).unwrap();
+    let project = store.add_project(&name, &repo_root).unwrap();
+    let first = store.create_named_session("First", project.id, "/one", false).unwrap();
+    let second = store.create_named_session("Second", project.id, "/two", true).unwrap();
     assert!(!first.created_at.is_empty());
     assert_eq!(store.set_session_worktree(first.id, true).unwrap().opt_in_worktree, true);
     assert!(store.set_session_worktree(-1, true).is_err());

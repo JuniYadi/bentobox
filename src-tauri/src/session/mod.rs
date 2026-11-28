@@ -232,10 +232,15 @@ pub async fn session_accept_plan(store: State<'_, Store>, session_id: i64) -> Re
 
 /// @adr ADR-0010.D1
 #[tauri::command]
-pub async fn session_create(store: State<'_, Store>, title: String, workspace_path: String, opt_in_worktree: bool) -> Result<SessionSummary, String> {
+pub async fn session_create(store: State<'_, Store>, title: String, project_id: i64, workspace_path: Option<String>, opt_in_worktree: bool) -> Result<SessionSummary, String> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || store.create_named_session(&title, &workspace_path, opt_in_worktree)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = store.project_root(project_id)?;
+        let workspace_path = workspace_path.unwrap_or(root);
+        store.create_named_session(&title, project_id, &workspace_path, opt_in_worktree)
+    }).await.map_err(|e| e.to_string())?
 }
+
 
 /// @adr ADR-0010.D1
 #[tauri::command]

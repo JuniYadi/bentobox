@@ -9,7 +9,7 @@ use std::{
 };
 use tauri::State;
 
-const LATEST_SCHEMA_VERSION: i64 = 2;
+const LATEST_SCHEMA_VERSION: i64 = 3;
 
 #[derive(Clone)]
 pub struct Store(std::sync::Arc<Mutex<Connection>>);
@@ -56,6 +56,25 @@ impl Store {
                  ALTER TABLE sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT '';
                  PRAGMA user_version = 2;"
             ).map_err(|e| e.to_string())?;
+        }
+        if version < 3 {
+            tx.execute_batch(
+                "CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL, root_path TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
+                 ALTER TABLE sessions ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL;"
+            ).map_err(|e| e.to_string())?;
+            let paths = {
+                let mut stmt = tx.prepare("SELECT DISTINCT workspace_path FROM sessions WHERE workspace_path != ''").map_err(|e| e.to_string())?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+                rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+            };
+            for path in paths {
+                // Old sessions can refer to deleted or non-Git workspaces; keep them unlinked.
+                if let Ok((root, name)) = crate::project::repository_root(Path::new(&path)) {
+                    tx.execute("INSERT INTO projects (name, root_path) VALUES (?1, ?2) ON CONFLICT(root_path) DO NOTHING", params![name, root]).map_err(|e| e.to_string())?;
+                    tx.execute("UPDATE sessions SET project_id = (SELECT id FROM projects WHERE root_path = ?1) WHERE workspace_path = ?2", params![root, path]).map_err(|e| e.to_string())?;
+                }
+            }
+            tx.pragma_update(None, "user_version", 3).map_err(|e| e.to_string())?;
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(Self(std::sync::Arc::new(Mutex::new(conn))))

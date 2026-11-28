@@ -12,7 +12,7 @@ This directory documents foundational architectural decisions for BentoBox.
 | [0006](./0006-tri-mode-session-architecture.md) | Tri-Mode Session Architecture (Orchestrator, Plan, Build) | Superseded by [0010](./0010-orchestrator-only-sessions-with-plan-approval.md) |
 | [0007](./0007-structured-prompt-handoff-protocol.md) | Structured Prompt Handoff Protocol for Agent Delegation | Accepted |
 | [0008](./0008-github-cli-integration.md) | GitHub CLI Integration for Issue and Pull Request Management | Accepted |
-| [0009](./0009-three-column-desktop-layout-architecture.md) | Three-Column Desktop Layout Architecture | Accepted |
+| [0009](./0009-three-column-desktop-layout-architecture.md) | Three-Column Desktop Layout Architecture | Superseded by [0016](./0016-ui-from-approved-design-frames.md) |
 | [0010](./0010-orchestrator-only-sessions-with-plan-approval.md) | Orchestrator-Only Sessions with a Plan Approval Gate (supersedes 0006 once session code migrates) | Accepted |
 | [0011](./0011-teams-with-fallback-chains.md) | Teams with Fallback Chains, Generated from Subscriptions | Accepted |
 | [0012](./0012-inline-harness-routing-syntax.md) | Inline Harness Routing Syntax | Accepted |

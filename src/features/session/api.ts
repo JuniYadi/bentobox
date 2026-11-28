@@ -51,8 +51,8 @@ export interface SessionSummary {
 }
 
 /** @adr ADR-0010.D1 */
-export function createSession(title: string, workspacePath: string, optInWorktree: boolean): Promise<SessionSummary> {
-  return invoke("session_create", { title, workspacePath, optInWorktree });
+export function createSession(title: string, projectId: number, optInWorktree: boolean, workspacePath?: string): Promise<SessionSummary> {
+  return invoke("session_create", { title, projectId, workspacePath: workspacePath ?? null, optInWorktree });
 }
 
 /** @adr ADR-0010.D1 */
