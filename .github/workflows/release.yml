@@ -1,3 +1,4 @@
+# @adr ADR-0013.D1
 name: release
 
 # Builds the Tauri desktop app and attaches the bundles to a GitHub Release.
@@ -14,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify-version:
@@ -42,6 +43,8 @@ jobs:
     needs: verify-version
     # Run on dispatch too, where verify-version is skipped.
     if: ${{ !failure() && !cancelled() }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +65,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+
+      # @adr ADR-0013.D4
+      # bundle.createUpdaterArtifacts makes every build sign its updater bundles, so fail
+      # before the long build when the key is missing.
+      - name: Require the updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD repository secrets. Updater bundles cannot be signed without them."
+            exit 1
+          fi
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -85,16 +101,108 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      - uses: tauri-apps/tauri-action@v1
+      # The two signing steps come after every third-party setup action and dependency install,
+      # so those never see the certificates or notarization credentials.
+
+      # @adr ADR-0013.D2
+      # The Tauri bundler imports the certificate into a temporary keychain itself. It treats a
+      # variable that is set but empty as present, so the APPLE_* values are exported only when
+      # they exist. Without a certificate the bundle is built unsigned and the run says so.
+      - name: Enable macOS signing and notarization
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::APPLE_CERTIFICATE is not set. This macOS bundle is built unsigned and not notarized."
+            exit 0
+          fi
+          names="APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID"
+          for name in $names; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is required when APPLE_CERTIFICATE is set."
+              exit 1
+            fi
+          done
+          delimiter="EOF_$(openssl rand -hex 16)"
+          for name in $names; do
+            printf '%s<<%s\n%s\n%s\n' "$name" "$delimiter" "${!name}" "$delimiter" >> "$GITHUB_ENV"
+          done
+
+      # @adr ADR-0013.D3
+      # Imports a PFX certificate and writes the CI-only platform config that Tauri merges into
+      # tauri.conf.json. Without a certificate the installer is built unsigned and the run says so.
+      - name: Enable Windows Authenticode signing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) {
+            Write-Host "::warning::WINDOWS_CERTIFICATE is not set. This Windows installer is built unsigned."
+            exit 0
+          }
+          if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            Write-Host "::error::WINDOWS_CERTIFICATE_PASSWORD is required when WINDOWS_CERTIFICATE is set."
+            exit 1
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "certificate.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $pfx
+          $config = @{ bundle = @{ windows = @{
+            certificateThumbprint = $cert.Thumbprint
+            digestAlgorithm = "sha256"
+            timestampUrl = "http://timestamp.digicert.com"
+          } } }
+          $config | ConvertTo-Json -Depth 5 | Set-Content -Path src-tauri/tauri.windows.conf.json
+
+      # @adr ADR-0013.D4
+      # Pinned to the v1.0.0 commit because this step receives every signing secret.
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Code signing (add these repository secrets to enable):
-          # macOS: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
-          #        APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
-          # Updater: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tauriScript: bun run tauri
           args: --target ${{ matrix.target }}
           releaseId: ${{ github.event.release.id }}
+          uploadUpdaterJson: ${{ github.event_name == 'release' }}
           uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
           retryAttempts: 1
+
+  # @adr ADR-0013.D4
+  # Every matrix job downloads latest.json, adds its platform and uploads it again, so two jobs
+  # finishing together can drop each other's entry. Fail the run when the manifest is incomplete.
+  verify-updater-manifest:
+    name: Verify latest.json is complete
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --output latest.json
+          problems=$(jq -r --arg want "${TAG#v}" '
+            (["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"] - (.platforms | keys)) as $missing
+            | [.platforms | to_entries[] | select((.value.signature // "") == "") | .key] as $unsigned
+            | [ (if ($missing | length) > 0 then "missing platforms: " + ($missing | join(", ")) else empty end),
+                (if ($unsigned | length) > 0 then "empty signature for: " + ($unsigned | join(", ")) else empty end),
+                (if .version != $want then "version " + .version + " does not match tag " + $want else empty end) ]
+            | join("; ")' latest.json)
+          if [ -n "$problems" ]; then
+            echo "::error::latest.json is incomplete ($problems). Re-run the build job of the affected platform from the Actions UI; this check re-runs with it."
+            exit 1
+          fi

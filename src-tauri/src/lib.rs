@@ -29,6 +29,11 @@ pub fn run() {
             runner.recover().map_err(std::io::Error::other)?;
             app.manage(runner);
             app.manage(store);
+            #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+            {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
+            }
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -70,6 +75,7 @@ pub fn run() {
             session::session_set_concise,
             session::session_set_model,
             session::session_set_team,
+            runner::runner_running_count,
             teams::teams_list,
             teams::teams_upsert,
             teams::teams_delete,

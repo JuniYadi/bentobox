@@ -370,6 +370,12 @@ impl Runner {
         Ok(())
     }
 
+    /// How many agent tasks are running; the updater refuses to restart the app over them.
+    /// @adr ADR-0013.D4
+    pub fn running_count(&self) -> Result<usize, String> {
+        self.registry.lock().map(|registry| registry.running.len()).map_err(|_| "runner state is unavailable".to_string())
+    }
+
     /// @adr ADR-0017.D1
     pub fn shutdown(&self) {
         let tasks: Vec<_> = match self.registry.lock() {
@@ -906,6 +912,9 @@ pub fn runner_start(runner: State<'_, Runner>, session_id: i64) -> Result<Vec<St
 /// @adr ADR-0017.D2
 #[tauri::command]
 pub fn runner_stop(runner: State<'_, Runner>, session_id: i64, task_id: String) -> Result<(), String> { runner.stop(session_id, &task_id) }
+/// @adr ADR-0013.D4
+#[tauri::command]
+pub fn runner_running_count(runner: State<'_, Runner>) -> Result<usize, String> { runner.running_count() }
 /// @adr ADR-0017.D2
 /// @adr ADR-0018.D3
 #[tauri::command]
