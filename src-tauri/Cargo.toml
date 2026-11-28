@@ -32,6 +32,10 @@ uuid = { version = "1", features = ["v4"] }
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
 
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+
 
 # @adr ADR-0015.D1
 # Smaller, faster-linking dev builds: keep file:line backtraces for our crate,

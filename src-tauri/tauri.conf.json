@@ -27,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -35,5 +36,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ4REEyMTA3RTI0NUMxNzIKUldSeXdVWGlCeUhhMklvbHlMVHEyZ3FRSWg0MXFtTUJqUHM4R3pRUFZta2U5TzhrK2FoQ0dCRGwK",
+      "endpoints": ["https://github.com/JuniYadi/bentobox/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
   }
 }

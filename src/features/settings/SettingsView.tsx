@@ -5,9 +5,10 @@ import { listDetectedHarnesses, type DetectedHarness } from "../agent/api";
 import { getAuthStatus, type AuthStatus } from "../auth/api";
 import { checkGitHubStatus, type GhStatus } from "../github/api";
 import { TeamsSection } from "../teams/TeamsSection";
+import { UpdatesSection } from "../updater/UpdatesSection";
 
 /** @adr ADR-0016.D5 */
-export const settingsSections = ["Harnesses", "Teams", "GitHub"] as const;
+export const settingsSections = ["Harnesses", "Teams", "Updates", "GitHub"] as const;
 
 type Section = (typeof settingsSections)[number];
 type HarnessEntry = { harness: DetectedHarness; auth: AuthStatus | null };
@@ -65,6 +66,7 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
               {harnesses && harnesses.length > 0 && <Card className="gap-0 py-0 shadow-none"><CardContent className="divide-y px-4">{harnesses.map(({ harness, auth }) => <div key={harness.capabilities.harness_id} className="py-3"><div>{harness.capabilities.display_name}</div><div className="text-sm text-muted-foreground"><span>{harness.executable_path}</span> · {harness.capabilities.transport === "acp" ? "ACP" : "Native process"} · Authentication: {auth?.state ?? "unavailable"}</div></div>)}</CardContent></Card>}
             </section>}
             {section === "Teams" && <TeamsSection />}
+            {section === "Updates" && <UpdatesSection />}
             {section === "GitHub" && <section><h2 className="mb-2 font-medium">Connection</h2><p className="mb-4 text-sm text-muted-foreground">BentoBox uses your existing GitHub CLI authentication.</p><Card className="shadow-none"><CardContent>{github === null ? "Checking GitHub CLI…" : <><p>{github.installed ? "GitHub CLI detected" : "GitHub CLI unavailable"}</p><p className="text-sm text-muted-foreground">{github.message}</p>{!github.installed && <p className="text-sm text-muted-foreground">Install the GitHub CLI to use GitHub features.</p>}{github.installed && !github.authenticated && <p className="text-sm text-muted-foreground">Run <code>gh auth login</code> to sign in.</p>}{github.authenticated && github.username && <p className="text-sm text-muted-foreground">Signed in as {github.username}</p>}</>}</CardContent></Card></section>}
           </div>
         </main>

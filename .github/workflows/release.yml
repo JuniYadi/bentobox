@@ -64,6 +64,78 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # @adr ADR-0013.D4
+      # bundle.createUpdaterArtifacts makes every build sign its updater bundles, so fail
+      # before the long build when the key is missing.
+      - name: Require the updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD repository secrets. Updater bundles cannot be signed without them."
+            exit 1
+          fi
+
+      # @adr ADR-0013.D2
+      # The Tauri bundler imports the certificate into a temporary keychain itself. It treats a
+      # variable that is set but empty as present, so the APPLE_* values are exported only when
+      # they exist. Without a certificate the bundle is built unsigned and the run says so.
+      - name: Enable macOS signing and notarization
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::APPLE_CERTIFICATE is not set. This macOS bundle is built unsigned and not notarized."
+            exit 0
+          fi
+          delimiter="EOF_${RANDOM}${RANDOM}"
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -z "$value" ]; then
+              echo "::error::$name is required when APPLE_CERTIFICATE is set."
+              exit 1
+            fi
+            printf '%s<<%s\n%s\n%s\n' "$name" "$delimiter" "$value" "$delimiter" >> "$GITHUB_ENV"
+          done
+
+      # @adr ADR-0013.D3
+      # Imports a PFX certificate and writes the CI-only platform config that Tauri merges into
+      # tauri.conf.json. Without a certificate the installer is built unsigned and the run says so.
+      - name: Enable Windows Authenticode signing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) {
+            Write-Host "::warning::WINDOWS_CERTIFICATE is not set. This Windows installer is built unsigned."
+            exit 0
+          }
+          if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            Write-Host "::error::WINDOWS_CERTIFICATE_PASSWORD is required when WINDOWS_CERTIFICATE is set."
+            exit 1
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "certificate.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $pfx
+          $config = @{ bundle = @{ windows = @{
+            certificateThumbprint = $cert.Thumbprint
+            digestAlgorithm = "sha256"
+            timestampUrl = "http://timestamp.digicert.com"
+          } } }
+          $config | ConvertTo-Json -Depth 5 | Set-Content -Path src-tauri/tauri.windows.conf.json
+
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -86,16 +158,40 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      # @adr ADR-0013.D4
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Code signing (add these repository secrets to enable):
-          # macOS: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
-          #        APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
-          # Updater: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tauriScript: bun run tauri
           args: --target ${{ matrix.target }}
           releaseId: ${{ github.event.release.id }}
+          # With a tag, latest.json points at this release's assets instead of releases/latest.
+          tagName: ${{ github.event.release.tag_name }}
+          uploadUpdaterJson: ${{ github.event_name == 'release' }}
           uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
           retryAttempts: 1
+
+  # @adr ADR-0013.D4
+  # Every matrix job downloads latest.json, adds its platform and uploads it again, so two jobs
+  # finishing together can drop each other's entry. Fail the run when a platform is missing;
+  # re-running the failed build job adds it back.
+  verify-updater-manifest:
+    name: Verify latest.json covers every platform
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check latest.json platforms
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --output latest.json
+          missing=$(jq -r '["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"] - (.platforms | keys) | join(", ")' latest.json)
+          if [ -n "$missing" ]; then
+            echo "::error::latest.json has no entry for: $missing. Re-run the failed build jobs."
+            exit 1
+          fi

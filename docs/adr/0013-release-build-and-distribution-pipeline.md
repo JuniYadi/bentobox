@@ -22,7 +22,7 @@ decisions:
   D4:
     title: Signed in-app updates via the Tauri updater plugin and release-hosted latest.json
     state: accepted
-    paths: [".github/workflows/release.yml", "src-tauri/tauri.conf.json", "src-tauri/src/**"]
+    paths: [".github/workflows/release.yml", "src-tauri/tauri.conf.json", "src-tauri/src/**", "src/features/updater/**"]
     protected: false
     use_cases: []
   D5:
