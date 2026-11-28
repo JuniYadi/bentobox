@@ -1,9 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Plan, PlanTask } from "./types";
+import { runnerStart } from "../runner/api";
 
 /** @adr ADR-0010.D1 */
 export function proposePlan(sessionId: number, tasks: PlanTask[]): Promise<Plan> {
   return invoke("session_propose_plan", { sessionId, tasks });
+}
+
+/** @adr ADR-0018.D1 */
+export async function startDirectRun(sessionId: number, tasks: PlanTask[]): Promise<Plan> {
+  const proposed = await proposePlan(sessionId, tasks);
+  const approved = await approvePlan(sessionId, proposed.revision);
+  await runnerStart(sessionId);
+  return approved;
 }
 
 /** @adr ADR-0010.D1 */

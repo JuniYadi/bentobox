@@ -12,15 +12,15 @@ import { resizedFraction, shortcut } from "./components/layout/keyboard";
 import { ProjectTree } from "./components/layout/ProjectTree";
 import { RightPanel } from "./components/layout/RightPanel";
 import { StatusBar } from "./components/layout/StatusBar";
-import { projectAdd, projectTree, projectUnassignedSessions, type Project, type ProjectSession } from "./features/project/api";
-import { approvePlan, createSession, getPlan, listSessions, proposePlan, setSessionWorktree } from "./features/session/api";
+import { addProjectFromPicker, projectTree, projectUnassignedSessions, type Project, type ProjectSession } from "./features/project/api";
+import { approvePlan, createSession, getPlan, listSessions, setSessionWorktree, startDirectRun } from "./features/session/api";
 import { PLAN_COMPOSER_PLACEHOLDER, PlanCard, showsPlanCard } from "./features/session/PlanCard";
 import { buildOneTaskPlan, getComposerHarnessOptions, sendState } from "./features/session/composer";
 import { AgentDetailView, AgentRightPanel, SubAgentCard } from "./features/agent-detail";
-import { fetchIncrementalEvents, loadSessionEvents } from "./features/agent-detail/timeline";
+import { fetchIncrementalEvents, loadSessionEvents, mergeEvents, partitionChatTimeline } from "./features/agent-detail/timeline";
 import { listDetectedHarnesses, type DetectedHarness } from "./features/agent/api";
-import { onRunnerEvent, runnerStart } from "./features/runner/api";
-import type { DbEvent } from "../src-tauri/src/db/api";
+import { onRunnerEvent, onSessionTitle, runnerRespondPermission, runnerSend, runnerSetMode, runnerStart, runnerStop } from "./features/runner/api";
+import type { DbEvent, JsonValue } from "../src-tauri/src/db/api";
 import { SettingsView } from "./features/settings/SettingsView";
 import type { Plan, Session } from "./features/session/types";
 import packageJson from "../package.json";
@@ -45,6 +45,19 @@ export function nextStateAfterCreate(previous: { sessions: Session[]; prompt: st
   return { ...previous, sessions: [...previous.sessions, session] };
 }
 
+/** @adr ADR-0018.D5 */
+export function withSessionTitle<T extends { id: number; title: string }>(items: T[], sessionId: number, title: string): T[] {
+  return items.map((item) => item.id === sessionId ? { ...item, title } : item);
+}
+
+/** @adr ADR-0018.D5 */
+export function applyRecentTitles<T extends { id: number; title: string }>(items: T[], updates: Map<number, { sequence: number; title: string }>, after: number): T[] {
+  return items.map((item) => {
+    const update = updates.get(item.id);
+    return update && update.sequence > after ? { ...item, title: update.title } : item;
+  });
+}
+
 /** @adr ADR-0016.D2 */
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -52,6 +65,7 @@ export default function App() {
   const [unassigned, setUnassigned] = useState<ProjectSession[]>([]);
   const [conversation, setConversation] = useState<{ sessions: Session[]; prompt: string }>({ sessions: [], prompt: "" });
   const { sessions, prompt } = conversation;
+  const [stoppingTaskId, setStoppingTaskId] = useState<string | null>(null);
   const setPrompt = (value: string) => setConversation((current) => ({ ...current, prompt: value }));
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   const [view, setView] = useState<{ kind: "main" } | { kind: "settings" } | { kind: "agent"; taskId: string }>({ kind: "main" });
@@ -60,17 +74,15 @@ export default function App() {
   const [eventsError, setEventsError] = useState<string | null>(null);
   const [eventsTruncated, setEventsTruncated] = useState(false);
   const [approvingSessionId, setApprovingSessionId] = useState<number | null>(null);
+  const sendingRef = useRef(false);
   const [detectedHarnesses, setDetectedHarnesses] = useState<DetectedHarness[]>([]);
   const [selectedHarness, setSelectedHarness] = useState<string | null>(null);
   const planGeneration = useRef(0);
-  const viewRef = useRef(view);
-  viewRef.current = view;
+  const titleUpdates = useRef<{ sequence: number; titles: Map<number, { sequence: number; title: string }> }>({ sequence: 0, titles: new Map() });
   const eventsRef = useRef(events);
   eventsRef.current = events;
   const eventsGeneration = useRef(0);
   const [filter, setFilter] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [projectPath, setProjectPath] = useState("");
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -83,27 +95,32 @@ export default function App() {
   const [rightFraction, setRightFraction] = useState(() => readFraction(storage.right));
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
   const activeSessionProjectId = projects.find((project) => (tree[project.id] ?? []).some((item) => item.id === activeSessionId))?.id ?? null;
+  const activeProject = projects.find((project) => project.id === activeSessionProjectId);
+  const chatScrollRef = useRef<HTMLElement>(null);
   const activePlan = plan?.session_id === activeSessionId ? plan : null;
   const activeTask = view.kind === "agent" ? activePlan?.tasks.find((task) => task.id === view.taskId) : undefined;
   const effectiveRightCollapsed = rightCollapsed || windowWidth < 1200;
   const widths = regionWidths(windowWidth, { leftFraction, rightFraction, leftCollapsed, rightCollapsed: effectiveRightCollapsed });
   const refreshWidths = () => { setLeftFraction(readFraction(storage.left)); setRightFraction(readFraction(storage.right)); };
 
+
   const reloadProjects = useCallback(async () => {
+    const titleSequence = titleUpdates.current.sequence;
     const [entries, orphaned] = await Promise.all([projectTree(), projectUnassignedSessions()]);
     setProjects(entries.map((entry) => entry.project));
-    setTree(Object.fromEntries(entries.map((entry) => [entry.project.id, entry.sessions])));
-    setUnassigned(orphaned);
+    setTree(Object.fromEntries(entries.map((entry) => [entry.project.id, applyRecentTitles(entry.sessions, titleUpdates.current.titles, titleSequence)])));
+    setUnassigned(applyRecentTitles(orphaned, titleUpdates.current.titles, titleSequence));
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    const titleSequence = titleUpdates.current.sequence;
     Promise.all([projectTree(), projectUnassignedSessions(), listSessions()]).then(([entries, orphaned, allSessions]) => {
       if (cancelled) return;
       setProjects(entries.map((entry) => entry.project));
-      setTree(Object.fromEntries(entries.map((entry) => [entry.project.id, entry.sessions])));
-      setUnassigned(orphaned);
-      setConversation((current) => ({ ...current, sessions: allSessions.map((item) => ({ ...item, subAgents: [] })) }));
+      setTree(Object.fromEntries(entries.map((entry) => [entry.project.id, applyRecentTitles(entry.sessions, titleUpdates.current.titles, titleSequence)])));
+      setUnassigned(applyRecentTitles(orphaned, titleUpdates.current.titles, titleSequence));
+      setConversation((current) => ({ ...current, sessions: applyRecentTitles(allSessions, titleUpdates.current.titles, titleSequence).map((item) => ({ ...item, subAgents: [] })) }));
       const assigned = new Set(entries.flatMap((entry) => entry.sessions.map((session) => session.id)));
       setActiveSessionId(allSessions.find((session) => assigned.has(session.id))?.id ?? null);
     }).catch(() => { if (!cancelled) setError("Backend isn't available."); }).finally(() => { if (!cancelled) setLoading(false); });
@@ -138,15 +155,16 @@ export default function App() {
   }, [activeSessionId]);
 
   useEffect(() => {
-    if (view.kind !== "agent" || activeSessionId === null) return;
+    if (activeSessionId === null) { setEvents(null); return; }
     let cancelled = false;
+    eventsRef.current = null;
     setEvents(null);
     const generation = ++eventsGeneration.current;
     setEventsError(null);
     setEventsTruncated(false);
     void loadSessionEvents(activeSessionId).then((value) => {
       if (!cancelled && eventsGeneration.current === generation) {
-        setEvents(value);
+        setEvents((current) => mergeEvents(value, current ?? []).events);
         setEventsTruncated(false);
       }
     }).catch((reason) => {
@@ -158,7 +176,7 @@ export default function App() {
       cancelled = true;
       eventsGeneration.current++;
     };
-  }, [activeSessionId, view.kind]);
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (activeSessionId === null) return;
@@ -188,23 +206,17 @@ export default function App() {
           // Retain current plan on transient error
         }
 
-        if (viewRef.current.kind === "agent") {
-          try {
-            const current = eventsRef.current ?? [];
-            const result = await fetchIncrementalEvents(sessionId, current);
-            if (isSubscribed && eventsGeneration.current === generation) {
-              setEvents((latest) => {
-                if (eventsGeneration.current !== generation) return latest;
-                return result.events;
-              });
-              setEventsTruncated(result.truncated);
-              setEventsError(null);
-            }
-          } catch (err) {
-            if (isSubscribed && eventsGeneration.current === generation) {
-              setEventsError(String(err instanceof Error ? err.message : err));
-            }
+        try {
+          const current = eventsRef.current ?? [];
+          const result = await fetchIncrementalEvents(sessionId, current);
+          if (isSubscribed && eventsGeneration.current === generation) {
+            if (result.events.some((event) => event.kind === "user_message" && !current.some((existing) => existing.id === event.id))) void reloadProjects().catch(() => {});
+            setEvents((latest) => mergeEvents(latest ?? [], result.events).events);
+            setEventsTruncated(result.truncated);
+            setEventsError(null);
           }
+        } catch (err) {
+          if (isSubscribed && eventsGeneration.current === generation) setEventsError(String(err instanceof Error ? err.message : err));
         }
       } finally {
         isFetching = false;
@@ -226,6 +238,7 @@ export default function App() {
         cleanup();
       } else {
         unlisten = cleanup;
+        void runFetch();
       }
     }).catch(() => {});
 
@@ -234,7 +247,22 @@ export default function App() {
       clearTimeout(debounceTimer ?? undefined);
       if (unlisten) unlisten();
     };
-  }, [activeSessionId]);
+  }, [activeSessionId, reloadProjects]);
+
+  useEffect(() => {
+    let subscribed = true;
+    let unlisten: (() => void) | undefined;
+    void onSessionTitle(({ sessionId, title }) => {
+      const sequence = ++titleUpdates.current.sequence;
+      titleUpdates.current.titles.set(sessionId, { sequence, title });
+      setTree((current) => Object.fromEntries(Object.entries(current).map(([id, items]) => [id, withSessionTitle(items, sessionId, title)])));
+      setUnassigned((current) => withSessionTitle(current, sessionId, title));
+      setConversation((current) => ({ ...current, sessions: withSessionTitle(current.sessions, sessionId, title) }));
+    }).then((cleanup) => { if (subscribed) unlisten = cleanup; else cleanup(); }).catch(() => {});
+    return () => { subscribed = false; unlisten?.(); };
+  }, []);
+
+  useEffect(() => { const element = chatScrollRef.current; if (element) element.scrollTop = element.scrollHeight; }, [events, activeSessionId, view.kind]);
 
   useEffect(() => {
     const resize = () => setWindowWidth(window.innerWidth);
@@ -269,15 +297,12 @@ export default function App() {
       await reloadProjects(); setError(null);
     } catch (reason) { setError(`Could not create session: ${String(reason)}`); }
   }
-  async function addProject(event: React.FormEvent) {
-    event.preventDefault();
-    const path = projectPath.trim();
-    if (!path) return;
-    try { await projectAdd(path); setProjectPath(""); setAdding(false); await reloadProjects(); setError(null); }
+  async function addProject() {
+    try { const added = await addProjectFromPicker(); if (added) { await reloadProjects(); setError(null); } }
     catch (reason) { setError(`Could not add project: ${String(reason)}`); }
   }
   async function toggleWorktree() {
-    if (!activeSession) return;
+    if (!activeSession || activeProject?.isGit === false) return;
     try {
       const updated = await setSessionWorktree(activeSession.id, !activeSession.optInWorktree);
       setConversation((current) => ({ ...current, sessions: current.sessions.map((item) => item.id === updated.id ? { ...item, ...updated } : item) })); setError(null);
@@ -290,18 +315,12 @@ export default function App() {
     setApprovingSessionId(sessionId);
     try {
       await approvePlan(sessionId, revision);
-      try {
-        await runnerStart(sessionId);
-      } catch (runnerErr) {
-        if (planGeneration.current === generation) {
-          setError(`Could not start runner: ${String(runnerErr)}`);
-        }
-      }
+      await runnerStart(sessionId);
       const updated = await getPlan(sessionId);
       if (planGeneration.current === generation) { setPlan(updated); setError(null); }
     } catch (reason) {
       if (planGeneration.current === generation) {
-        setError(`Could not approve or reload plan: ${String(reason)}`);
+        setError(`Could not approve, start, or reload plan: ${String(reason)}`);
         try {
           const refreshed = await getPlan(sessionId);
           if (planGeneration.current === generation) setPlan(refreshed);
@@ -313,19 +332,39 @@ export default function App() {
       setApprovingSessionId(null);
     }
   }
+  async function stopChatTask(taskId: string) {
+    if (!activeSession || stoppingTaskId !== null) return;
+    setStoppingTaskId(taskId);
+    try { await runnerStop(activeSession.id, taskId); setError(null); }
+    catch (reason) { setError(`Could not stop task: ${String(reason)}`); }
+    finally { setStoppingTaskId(null); }
+  }
   async function handleSend() {
-    if (!activeSession || !selectedHarness || !prompt.trim()) return;
+    if (!activeSession || !selectedHarness || !prompt.trim() || sendingRef.current) return;
     const state = sendState({ text: prompt, harness: selectedHarness, plan: activePlan });
     if (!state.enabled) return;
+    const generation = planGeneration.current;
+    sendingRef.current = true;
     try {
-      const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      const tasks = buildOneTaskPlan(prompt, selectedHarness, activeSession.optInWorktree, suffix);
-      const newPlan = await proposePlan(activeSession.id, tasks);
-      setPlan(newPlan);
-      setPrompt("");
-      setError(null);
+      const task = activePlan?.tasks.length === 1 ? activePlan.tasks[0] : null;
+      if (task && (task.status === "running" || task.status === "review")) {
+        await runnerSend(activeSession.id, task.id, prompt.trim());
+      } else {
+        const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        const tasks = buildOneTaskPlan(prompt, selectedHarness, activeProject?.isGit !== false && activeSession.optInWorktree, suffix);
+        await startDirectRun(activeSession.id, tasks);
+        const updated = await getPlan(activeSession.id);
+        if (planGeneration.current === generation) setPlan(updated);
+        void reloadProjects().catch(() => {});
+      }
+      if (planGeneration.current === generation) { setPrompt(""); setError(null); }
     } catch (reason) {
-      setError(`Could not propose plan: ${String(reason)}`);
+      if (planGeneration.current === generation) {
+        setError(`Could not send message: ${String(reason)}`);
+        void getPlan(activeSession.id).then((updated) => { if (planGeneration.current === generation) setPlan(updated); }).catch(() => {});
+      }
+    } finally {
+      sendingRef.current = false;
     }
   }
 
@@ -336,11 +375,11 @@ export default function App() {
         <SidebarProvider open={!leftCollapsed} onOpenChange={(open) => { setLeftCollapsed(!open); localStorage.setItem(storage.leftCollapsed, String(!open)); }} className="flex min-h-0 w-full flex-1">
           <Sidebar data-region="left" collapsible="none" className="h-full min-h-0 shrink-0 border-r w-(--sidebar-width)" style={{ "--sidebar-width": leftCollapsed ? `${geometry.rail / 16}rem` : regionWidthCss("left", leftFraction) } as React.CSSProperties}>
             <SidebarHeader className="gap-2 p-3">{leftCollapsed ? <div className="grid size-6 place-items-center rounded bg-primary text-primary-foreground">▦</div> : <><div className="flex h-8 items-center gap-2 px-1"><span className="grid size-6 place-items-center rounded bg-primary text-primary-foreground">▦</span><span className="font-medium">bentobox</span><span className="ml-auto text-xs text-muted-foreground">{version}</span></div><div className="relative"><Search className="absolute left-2 top-2.5 size-4 text-muted-foreground" /><Input ref={searchRef} aria-label="Search sessions" placeholder="Search sessions ⌘K" value={filter} onChange={(event) => setFilter(event.target.value)} className="h-8 pl-8" /></div></>}</SidebarHeader>
-            <SidebarContent className="min-h-0 overflow-auto px-2">{!leftCollapsed && <ProjectTree projects={projects} sessionsByProject={tree} unassignedSessions={unassigned} activeSessionId={activeSessionId} filter={filter} loading={loading} adding={adding} projectPath={projectPath} expanded={expanded} onToggleAdd={() => setAdding((value) => !value)} onProjectPathChange={setProjectPath} onAddProject={addProject} onToggleProject={(id, open) => setExpanded((value) => ({ ...value, [id]: open }))} onSelectSession={(id) => { setActiveSessionId(id); setView({ kind: "main" }); }} onCreateSession={(project) => void createNewSession(project)} />}</SidebarContent>
+            <SidebarContent className="min-h-0 overflow-auto px-2">{!leftCollapsed && <ProjectTree projects={projects} sessionsByProject={tree} unassignedSessions={unassigned} activeSessionId={activeSessionId} filter={filter} loading={loading} expanded={expanded} onAddProject={() => void addProject()} onToggleProject={(id, open) => setExpanded((value) => ({ ...value, [id]: open }))} onSelectSession={(id) => { setActiveSessionId(id); setView({ kind: "main" }); }} onCreateSession={(project) => void createNewSession(project)} />}</SidebarContent>
             <SidebarFooter className="border-t p-2">{!leftCollapsed && <Button variant="ghost" className="justify-start" onClick={() => setView({ kind: "settings" })}><Settings2 /><span>Settings ⌘,</span></Button>}<Button variant="ghost" className="justify-start" onClick={() => { const value = !leftCollapsed; setLeftCollapsed(value); localStorage.setItem(storage.leftCollapsed, String(value)); }}><PanelRight />{!leftCollapsed && <span>Collapse ⌘B</span>}</Button></SidebarFooter>
           </Sidebar>
           {!leftCollapsed && <div role="separator" aria-label="Resize project sidebar" aria-orientation="vertical" aria-valuenow={Math.round(widths.left / windowWidth * 100)} aria-valuemin={Math.round(geometry.left.min / windowWidth * 100)} aria-valuemax={Math.round(geometry.left.max / windowWidth * 100)} tabIndex={0} className="w-1 shrink-0 cursor-col-resize hover:bg-ring focus-visible:bg-ring" onDoubleClick={() => { localStorage.removeItem(storage.left); setLeftFraction(null); }} onKeyDown={(event) => resizeKey(event, "left", leftFraction)} onPointerDown={(event) => beginResize(event, "left")} />}
-          <main data-region="content" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">{view.kind === "settings" ? <SettingsView onClose={() => setView({ kind: "main" })} /> : view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentDetailView session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} onBack={() => setView({ kind: "main" })} /> : <><TopBar session={activeSession} plan={activePlan} project={projects.find((item) => (tree[item.id] ?? []).some((entry) => entry.id === activeSessionId))} collapsed={effectiveRightCollapsed} onToggle={() => { const next = !rightCollapsed; setRightCollapsed(next); localStorage.setItem(storage.rightCollapsed, String(next)); }} /><Chat session={activeSession} plan={activePlan} busy={approvingSessionId === activeSessionId && activeSessionId !== null} onApprove={(revision) => void approveCurrentPlan(revision)} onOpenAgent={(taskId) => { setEvents(null); setEventsError(null); setEventsTruncated(false); setView({ kind: "agent", taskId }); }} prompt={prompt} onPromptChange={setPrompt} onToggleWorktree={toggleWorktree} onCreateSession={() => { const project = projects.find((item) => item.id === activeSessionProjectId) ?? projects[0]; if (project) void createNewSession(project); }} error={error} loading={loading} harnesses={detectedHarnesses} selectedHarness={selectedHarness} onSelectHarness={setSelectedHarness} onSend={() => void handleSend()} /></>}</main>
+          <main data-region="content" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">{view.kind === "settings" ? <SettingsView onClose={() => setView({ kind: "main" })} /> : view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentDetailView session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} onBack={() => setView({ kind: "main" })} /> : <><TopBar session={activeSession} plan={activePlan} project={activeProject} collapsed={effectiveRightCollapsed} onToggle={() => { const next = !rightCollapsed; setRightCollapsed(next); localStorage.setItem(storage.rightCollapsed, String(next)); }} /><Chat session={activeSession} plan={activePlan} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} scrollRef={chatScrollRef} nonGit={activeProject?.isGit === false} busy={approvingSessionId === activeSessionId && activeSessionId !== null} stoppingTaskId={stoppingTaskId} onStop={(taskId) => void stopChatTask(taskId)} onApprove={(revision) => void approveCurrentPlan(revision)} onOpenAgent={(taskId) => setView({ kind: "agent", taskId })} prompt={prompt} onPromptChange={setPrompt} onToggleWorktree={toggleWorktree} onCreateSession={() => { const project = activeProject ?? projects[0]; if (project) void createNewSession(project); }} error={error} loading={loading} harnesses={detectedHarnesses} selectedHarness={selectedHarness} onSelectHarness={setSelectedHarness} onSend={() => void handleSend()} onPermission={(taskId, requestId, decision) => { if (activeSession) void runnerRespondPermission(activeSession.id, taskId, requestId, decision).catch((reason) => setError(`Could not respond to permission: ${String(reason)}`)); }} onMode={(taskId, modeId) => { if (activeSession) void runnerSetMode(activeSession.id, taskId, modeId).catch((reason) => setError(`Could not change mode: ${String(reason)}`)); }} /></>}</main>
           {view.kind !== "settings" && !effectiveRightCollapsed && <><div role="separator" aria-label="Resize contextual panel" aria-orientation="vertical" aria-valuenow={Math.round(widths.right / windowWidth * 100)} aria-valuemin={Math.round(geometry.right.min / windowWidth * 100)} aria-valuemax={Math.round(geometry.right.max / windowWidth * 100)} tabIndex={0} className="w-1 shrink-0 cursor-col-resize hover:bg-ring focus-visible:bg-ring" onDoubleClick={() => { localStorage.removeItem(storage.right); setRightFraction(null); }} onKeyDown={(event) => resizeKey(event, "right", rightFraction)} onPointerDown={(event) => beginResize(event, "right")} />
           <div data-region="right" className="h-full min-h-0 shrink-0 overflow-hidden w-(--right-width)" style={{ "--right-width": regionWidthCss("right", rightFraction) } as React.CSSProperties}>{view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentRightPanel session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} /> : <RightPanel onUseAsPrompt={setPrompt} />}</div></>}
         </SidebarProvider>
@@ -401,6 +440,15 @@ export interface ChatProps {
   selectedHarness?: string | null;
   onSelectHarness?: (harnessId: string) => void;
   onSend?: () => void;
+  events?: DbEvent[] | null;
+  eventsError?: string | null;
+  eventsTruncated?: boolean;
+  scrollRef?: React.Ref<HTMLElement>;
+  nonGit?: boolean;
+  onPermission?: (taskId: string, requestId: string, decision: "allow" | "deny" | "allow_always") => void;
+  onMode?: (taskId: string, modeId: string) => void;
+  stoppingTaskId?: string | null;
+  onStop?: (taskId: string) => void;
 }
 
 /** @adr ADR-0016.D2 */
@@ -420,6 +468,15 @@ export function Chat({
   selectedHarness = null,
   onSelectHarness,
   onSend,
+  events = null,
+  eventsError,
+  eventsTruncated,
+  scrollRef,
+  nonGit = false,
+  onPermission,
+  onMode,
+  stoppingTaskId = null,
+  onStop,
 }: ChatProps) {
   const harnessOptions = getComposerHarnessOptions(harnesses);
   const chosenOption = harnessOptions.find((opt) => opt.harnessId === selectedHarness);
@@ -429,15 +486,43 @@ export function Chat({
     plan,
   });
   const sendDisabled = !currentSendState.enabled || !session;
+  const tasks = plan?.tasks ?? [];
+  const parts = tasks.map((task) => ({ task, ...partitionChatTimeline(events ?? [], task) }));
+  const chatItems = parts.flatMap(({ task, chatItems }) => chatItems.map((event) => ({ task, event }))).sort((a, b) => a.event.id - b.event.id);
+  const chatIds = new Set(chatItems.map(({ event }) => event.id));
+  const activityItems = (events ?? []).filter((event) => !chatIds.has(event.id));
+  const task = tasks.length === 1 ? tasks[0] : null;
+  let modes: { id: string; name: string }[] = [];
+  let currentMode: string | null = null;
+  for (const event of events ?? []) {
+    const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {};
+    if (!task || payload.plan_task_id !== task.id) continue;
+    if (event.kind === "session_modes" && Array.isArray(payload.available)) {
+      modes = payload.available.flatMap((mode) => mode && typeof mode === "object" && !Array.isArray(mode) && typeof mode.id === "string" && typeof mode.name === "string" ? [{ id: mode.id, name: mode.name }] : []);
+      currentMode = typeof payload.current === "string" ? payload.current : null;
+    } else if (event.kind === "session_mode_changed") currentMode = typeof payload.current === "string" ? payload.current : null;
+  }
 
   return <>
-    <section className="min-h-0 flex-1 overflow-auto">
+    <section ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
       <div className="mx-auto flex w-full flex-col gap-5 px-6 py-8 max-w-(--chat-max-width)" style={{ "--chat-max-width": "calc(720 * var(--fw))" } as React.CSSProperties}>
         {error && <p role="alert" className="text-sm text-muted-foreground">{error}</p>}
         {!session ? <div className="flex flex-col items-center gap-3 py-20 text-center text-sm text-muted-foreground">{loading ? "Loading sessions…" : "No session selected. Choose a project to create a session."}<Button variant="outline" onClick={onCreateSession} disabled={!session && loading}>New session</Button></div> : <>
           <p className="font-mono text-sm text-muted-foreground">{session.workspacePath}</p>
           {showsPlanCard(plan) && plan && <PlanCard plan={plan} busy={busy} onApprove={onApprove} />}
-          {plan?.tasks_started && plan.tasks.map((task) => <SubAgentCard key={task.id} task={task} onOpen={() => onOpenAgent(task.id)} />)}
+          {plan?.tasks_started && tasks.length > 1 && tasks.map((item) => <SubAgentCard key={item.id} task={item} onOpen={() => onOpenAgent(item.id)} />)}
+          {task && plan?.tasks_started && <Button type="button" variant="outline" onClick={() => onOpenAgent(task.id)}>Open agent</Button>}
+          {task && (task.status === "running" || task.status === "review") && <Button type="button" variant="outline" disabled={stoppingTaskId === task.id} onClick={() => onStop?.(task.id)}>{stoppingTaskId === task.id ? "Stopping…" : "Stop"}</Button>}
+          {eventsError && <p role="alert">{eventsError}</p>}
+          {eventsTruncated && <p role="status">Showing the first 5,000 events</p>}
+          {chatItems.map(({ task: itemTask, event }) => {
+            const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {};
+            if (event.kind !== "permission_request") return <div key={event.id} className={event.kind === "user_message" ? "self-end rounded-lg bg-primary p-3 text-primary-foreground" : "self-start rounded-lg border p-3"}><p className="whitespace-pre-wrap">{typeof payload.text === "string" ? payload.text : ""}</p></div>;
+            const requestId = String(payload.request_id ?? event.id);
+            return <div key={event.id} className="rounded-lg border p-3 text-sm"><p>Permission required: {typeof payload.operation === "string" ? payload.operation : "Operation"} {typeof payload.target === "string" ? payload.target : ""}</p><div className="flex gap-2 pt-2"><Button type="button" size="sm" variant="outline" disabled={payload.can_deny === false} onClick={() => onPermission?.(itemTask.id, requestId, "deny")}>Deny</Button><Button type="button" size="sm" disabled={payload.can_allow === false} onClick={() => onPermission?.(itemTask.id, requestId, "allow")}>Allow</Button>{payload.allow_always === true && <Button type="button" size="sm" variant="outline" onClick={() => onPermission?.(itemTask.id, requestId, "allow_always")}>Always allow</Button>}</div></div>;
+          })}
+          {tasks.some((item) => item.status === "running") && <p role="status" className="text-sm text-muted-foreground">Agent working…</p>}
+          {activityItems.length > 0 && <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer">Activity ({activityItems.length})</summary><ul className="mt-2 space-y-1 text-xs text-muted-foreground">{activityItems.map((event) => { const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {}; const detail = [payload.tool, payload.target, payload.text, payload.status].find((value) => typeof value === "string"); return <li key={event.id} className="truncate">{event.kind}{typeof detail === "string" ? `: ${detail}` : ""}</li>; })}</ul></details>}
         </>}
       </div>
     </section>
@@ -483,7 +568,8 @@ export function Chat({
               )}
             </DropdownMenuContent>
           </DropdownMenu>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={session?.optInWorktree ?? false} onCheckedChange={onToggleWorktree} disabled={!session} />Worktree</label>
+          {task && modes.length > 0 && <label className="text-xs">Mode <select aria-label="Mode" value={currentMode ?? ""} onChange={(event) => onMode?.(task.id, event.target.value)} className="rounded border bg-background p-1">{currentMode === null && <option value="" disabled>Select mode</option>}{modes.map((mode) => <option key={mode.id} value={mode.id}>{mode.name}</option>)}</select></label>}
+          <label title={nonGit ? "Not a git repository: worktree isolation is unavailable" : undefined} className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={!nonGit && (session?.optInWorktree ?? false)} onCheckedChange={onToggleWorktree} disabled={!session || nonGit} />Worktree{nonGit && <span>Not a git repository: worktree isolation is unavailable</span>}</label>
           <Button type="submit" disabled={sendDisabled} aria-describedby={currentSendState.reason ? "send-disabled-reason" : undefined} className="ml-auto"><span>Send</span></Button>
         </div>
       </form>

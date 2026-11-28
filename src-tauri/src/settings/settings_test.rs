@@ -76,7 +76,7 @@ fn migrates_v3() {
         let conn = store.connection().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
         let sentinel: String = conn.query_row("SELECT value FROM sentinel", [], |row| row.get(0)).unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         assert_eq!(sentinel, "kept");
         drop(conn);
         store.setting_set_with(TEST_REGISTRY, "test.boolean", &json!(true)).unwrap();

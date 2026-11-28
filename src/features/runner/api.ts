@@ -11,14 +11,24 @@ export function runnerStop(sessionId: number, taskId: string): Promise<void> {
   return invoke("runner_stop", { sessionId, taskId });
 }
 
-/** @adr ADR-0017.D3 */
-export function runnerRespondPermission(sessionId: number, taskId: string, requestId: string, decision: "allow" | "deny"): Promise<void> {
+/** @adr ADR-0018.D3 */
+export function runnerRespondPermission(sessionId: number, taskId: string, requestId: string, decision: "allow" | "deny" | "allow_always"): Promise<void> {
   return invoke("runner_respond_permission", { sessionId, taskId, requestId, decision });
 }
 
-/** @adr ADR-0017.D3 */
-export function runnerSteer(sessionId: number, taskId: string, text: string): Promise<void> {
-  return invoke("runner_steer", { sessionId, taskId, text });
+/** @adr ADR-0018.D2 */
+export function runnerSend(sessionId: number, taskId: string, text: string): Promise<void> {
+  return invoke("runner_send", { sessionId, taskId, text });
+}
+
+/** @adr ADR-0018.D3 */
+export function runnerSetMode(sessionId: number, taskId: string, modeId: string): Promise<void> {
+  return invoke("runner_set_mode", { sessionId, taskId, modeId });
+}
+
+/** @adr ADR-0018.D5 */
+export function onSessionTitle(handler: (event: { sessionId: number; title: string }) => void): Promise<() => void> {
+  return listen<{ sessionId: number; title: string }>("session:title", (event) => handler(event.payload));
 }
 
 /** @adr ADR-0017.D3 */

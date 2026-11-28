@@ -1,10 +1,10 @@
-import { Check, ChevronDown, ChevronRight, Plus } from "lucide-react";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { Check, ChevronDown, ChevronRight, Plus, TriangleAlert } from "lucide-react";
 import { SidebarGroup, SidebarGroupAction, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { sessionGlyph, type Project, type ProjectSession } from "../../features/project/api";
 
 /** @adr ADR-0016.D2 */
+/** @adr ADR-0019.D1 */
+/** @adr ADR-0019.D2 */
 export interface ProjectTreeProps {
   projects: Project[];
   sessionsByProject: Record<number, ProjectSession[]>;
@@ -12,12 +12,8 @@ export interface ProjectTreeProps {
   activeSessionId: number | null;
   filter: string;
   loading: boolean;
-  adding: boolean;
-  projectPath: string;
   expanded: Record<number, boolean>;
-  onToggleAdd: () => void;
-  onProjectPathChange: (path: string) => void;
-  onAddProject: (event: React.FormEvent) => void;
+  onAddProject: () => void;
   onToggleProject: (id: number, expanded: boolean) => void;
   onSelectSession: (id: number) => void;
   onCreateSession: (project: Project) => void;
@@ -41,20 +37,21 @@ function sessionMeta(activity: string) {
 }
 
 /** @adr ADR-0016.D2 */
-export function ProjectTree({ projects, sessionsByProject, unassignedSessions = [], activeSessionId, filter, loading, adding, projectPath, expanded, onToggleAdd, onProjectPathChange, onAddProject, onToggleProject, onSelectSession, onCreateSession }: ProjectTreeProps) {
+/** @adr ADR-0019.D1 */
+/** @adr ADR-0019.D2 */
+export function ProjectTree({ projects, sessionsByProject, unassignedSessions = [], activeSessionId, filter, loading, expanded, onAddProject, onToggleProject, onSelectSession, onCreateSession }: ProjectTreeProps) {
   const search = filter.toLowerCase();
   const matches = projects.filter((project) => (project.name + " " + (sessionsByProject[project.id] ?? []).map((session) => session.title).join(" ")).toLowerCase().includes(search));
   return <SidebarGroup>
     <SidebarGroupLabel>Projects</SidebarGroupLabel>
-    <SidebarGroupAction aria-label="Add project" title="Add project" onClick={onToggleAdd}><Plus /></SidebarGroupAction>
-    {adding && <form onSubmit={onAddProject} className="flex gap-1 px-2 pb-2"><Input autoFocus aria-label="Project path" placeholder="Repository path" value={projectPath} onChange={(event) => onProjectPathChange(event.target.value)} /><Button size="icon" type="submit" aria-label="Register project"><Check /></Button></form>}
+    <SidebarGroupAction aria-label="Add project" title="Add project" onClick={onAddProject}><Plus /></SidebarGroupAction>
     <SidebarGroupContent>
       {matches.map((project) => {
         const sessions = (sessionsByProject[project.id] ?? []).filter((item) => project.name.toLowerCase().includes(search) || item.title.toLowerCase().includes(search));
         const isOpen = expanded[project.id] ?? true;
         return <SidebarMenu key={project.id}>
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={() => onToggleProject(project.id, !isOpen)} aria-expanded={isOpen}><span>{isOpen ? <ChevronDown /> : <ChevronRight />}</span><span>{project.name}</span></SidebarMenuButton>
+            <SidebarMenuButton onClick={() => onToggleProject(project.id, !isOpen)} aria-expanded={isOpen}><span>{isOpen ? <ChevronDown /> : <ChevronRight />}</span><span>{project.name}</span>{!project.isGit && <span title="Not a git repository: worktree isolation is unavailable" aria-label="Not a git repository: worktree isolation is unavailable"><TriangleAlert className="text-warning" /></span>}</SidebarMenuButton>
             {isOpen && <div className="ml-5 border-l pl-2">
               {sessions.map((item) => <SidebarMenuItem key={item.id}>
                 <SidebarMenuButton className="h-7" isActive={item.id === activeSessionId} onClick={() => onSelectSession(item.id)} title={item.title}>

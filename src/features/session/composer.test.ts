@@ -138,6 +138,15 @@ describe("[ADR-0017.D4] composer send disabled reasons", () => {
     }
   });
 
+  test("[ADR-0018.D1] permits follow-ups to a running or review single-task chat but requires a harness", () => {
+    const task = buildOneTaskPlan("First", "omp", false, "one")[0];
+    for (const status of ["running", "review"] as const) {
+      const plan = { ...basePlan, phase: status === "running" ? "Build" as const : "Review" as const, tasks: [{ ...task, status }] };
+      expect(sendState({ text: "Follow up", harness: "omp", plan }).enabled).toBe(true);
+      expect(sendState({ text: "Follow up", harness: null, plan }).enabled).toBe(false);
+    }
+  });
+
   test("disabled when harness is not selected", () => {
     const state = sendState({
       text: "Investigate crash",
@@ -195,4 +204,13 @@ describe("[ADR-0017.D4] harness list filtering by transport and runnable", () =>
     expect(claude.disabledReason).toBe("downloads the adapter with npx on first use");
     expect(claude.launchNote).toBe("downloads the adapter with npx on first use");
   });
+});
+
+test("[ADR-0018.D1] a multi-task plan awaiting approval blocks direct send", () => {
+  const first = buildOneTaskPlan("First", "omp", false, "first")[0];
+  const second = buildOneTaskPlan("Second", "omp", false, "second")[0];
+  const plan: Plan = { session_id: 1, revision: 1, phase: "Plan", approved: false, estimated_tokens: null, tasks_started: false, tasks: [first, second] };
+  const state = sendState({ text: "Another message", harness: "omp", plan });
+  expect(state.enabled).toBe(false);
+  expect(state.reason).toContain("Plan in progress");
 });

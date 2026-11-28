@@ -1,9 +1,12 @@
 use super::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn store() -> (Store, std::path::PathBuf) {
     let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let root = std::env::temp_dir().join(format!("bentobox-plan-{}-{unique}", std::process::id()));
+    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("bentobox-plan-{}-{unique}-{count}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let store = Store::open(root.join("db.sqlite")).unwrap();
     (store, root)
@@ -230,5 +233,38 @@ fn completed_transition_succeeds_even_when_runner_start_fails() {
     assert!(res.is_ok());
     let plan = res.unwrap();
     assert_eq!(plan.tasks[0].status, "completed");
+    cleanup(&root);
+}
+
+#[test]
+fn non_git_project_rejects_worktree_opt_in() {
+    // [ADR-0019.D2] Non-git project rejects opt_in_worktree on session creation and update
+    let (store, root) = store();
+    let nongit = root.join("nongit-folder");
+    std::fs::create_dir_all(&nongit).unwrap();
+    let proj = store.add_project("nongit", nongit.to_str().unwrap()).unwrap();
+
+    let check = || {
+        let proj_root = store.project_root(proj.id)?;
+        if !crate::project::is_git_repo(std::path::Path::new(&proj_root)) {
+            return Err("Not a git repository: worktree isolation is unavailable".to_string());
+        }
+        store.create_named_session("Session", proj.id, &proj_root, true)
+    };
+    assert!(check().unwrap_err().contains("Not a git repository: worktree isolation is unavailable"));
+
+    let session = store.create_named_session("Session", proj.id, nongit.to_str().unwrap(), false).unwrap();
+    let set_worktree = || {
+        let proj_root: String = store.connection()?.query_row(
+            "SELECT projects.root_path FROM sessions JOIN projects ON projects.id = sessions.project_id WHERE sessions.id = ?1",
+            [session.id],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if !crate::project::is_git_repo(std::path::Path::new(&proj_root)) {
+            return Err("Not a git repository: worktree isolation is unavailable".to_string());
+        }
+        store.set_session_worktree(session.id, true)
+    };
+    assert!(set_worktree().unwrap_err().contains("Not a git repository: worktree isolation is unavailable"));
     cleanup(&root);
 }

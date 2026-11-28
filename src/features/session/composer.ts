@@ -41,14 +41,12 @@ export function buildOneTaskPlan(text: string, harnessId: string, worktree: bool
   ];
 }
 
-/** @adr ADR-0017.D4 */
+/** @adr ADR-0018.D1 */
 export function sendState({ text, harness, plan }: SendStateInput): SendStateResult {
   const inProgressPhases: Plan["phase"][] = ["Plan", "Approve", "Build", "Review"];
-  if (plan && inProgressPhases.includes(plan.phase)) {
-    return {
-      enabled: false,
-      reason: `Plan in progress (${plan.phase}). Complete or cancel it before starting a new goal.`,
-    };
+  const task = plan?.tasks.length === 1 ? plan.tasks[0] : null;
+  if (plan && inProgressPhases.includes(plan.phase) && !(task && (task.status === "running" || task.status === "review"))) {
+    return { enabled: false, reason: `Plan in progress (${plan.phase}). Complete or cancel it before starting a new goal.` };
   }
   if (!harness) {
     return {

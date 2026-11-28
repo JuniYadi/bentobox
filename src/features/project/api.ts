@@ -1,10 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 
 /** @adr ADR-0016.D2 */
+/** @adr ADR-0019.D2 */
 export interface Project {
   id: number;
   name: string;
   rootPath: string;
+  isGit: boolean;
   createdAt: string;
 }
 
@@ -42,8 +45,20 @@ export function sessionGlyph(summary: ProjectSession): SessionGlyph {
 }
 
 /** @adr ADR-0016.D2 */
+/** @adr ADR-0019.D1 */
 export function projectAdd(path: string): Promise<Project> {
   return invoke("project_add", { path });
+}
+
+/** @adr ADR-0019.D1 */
+export function pickProjectDirectory(): Promise<string | null> {
+  return open({ directory: true, multiple: false });
+}
+
+/** @adr ADR-0019.D1 */
+export async function addProjectFromPicker(): Promise<Project | null> {
+  const path = await pickProjectDirectory();
+  return path === null ? null : projectAdd(path);
 }
 
 /** @adr ADR-0016.D2 */

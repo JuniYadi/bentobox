@@ -31,6 +31,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             greet,
             agent::list_detected_harnesses,
@@ -67,7 +68,8 @@ pub fn run() {
             runner::runner_start,
             runner::runner_stop,
             runner::runner_respond_permission,
-            runner::runner_steer,
+            runner::runner_send,
+            runner::runner_set_mode,
             db::db_append_event,
             db::db_events,
             db::db_set_capability,

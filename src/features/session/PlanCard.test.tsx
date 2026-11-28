@@ -185,11 +185,13 @@ describe("[ADR-0016.D3] plan approval card", () => {
     expect(busyHtml).toMatch(/<button[^>]*\bdisabled=""[^>]*>Approve &amp; build<\/button>/);
   });
 
-  test("showsPlanCard is truthy only in Plan or Approve phases", () => {
+  test("[ADR-0018.D1] showsPlanCard only for multi-task plans in Plan or Approve", () => {
+    const tasks = [makeTask(), makeTask({ id: "task-2" })];
     expect(showsPlanCard(null)).toBe(false);
     expect(showsPlanCard(undefined)).toBe(false);
-    expect(showsPlanCard(makePlan({ phase: "Plan" }))).toBe(true);
-    expect(showsPlanCard(makePlan({ phase: "Approve" }))).toBe(true);
+    expect(showsPlanCard(makePlan({ phase: "Plan" }))).toBe(false);
+    expect(showsPlanCard(makePlan({ phase: "Plan", tasks }))).toBe(true);
+    expect(showsPlanCard(makePlan({ phase: "Approve", tasks }))).toBe(true);
     expect(showsPlanCard(makePlan({ phase: "Build" }))).toBe(false);
     expect(showsPlanCard(makePlan({ phase: "Review" }))).toBe(false);
     expect(showsPlanCard(makePlan({ phase: "Rejected" }))).toBe(false);
