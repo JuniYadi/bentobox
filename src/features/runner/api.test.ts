@@ -23,8 +23,8 @@ mock.module("@tauri-apps/api/event", () => ({
 }));
 // Exception: dynamic import is required after mock.module to bind the mocked Tauri modules.
 const { runnerStart, runnerStop, runnerRespondPermission, runnerSend, runnerSetMode, onRunnerEvent, onSessionTitle } = await import("./api");
-// Exception: session API must bind the mocked Tauri invoke implementation.
-const { startDirectRun } = await import("../session/api");
+// Exception: session API must bind the mocked Tauri invoke implementation after mock.module.
+const { startDirectRun, sessionSetConcise } = await import("../session/api");
 
 describe("[ADR-0017.D3] runner api wrappers", () => {
   test("[ADR-0018.D1] direct Send proposes, approves the returned revision, and starts", async () => {
@@ -104,4 +104,16 @@ describe("[ADR-0017.D3] runner api wrappers", () => {
     registered!.handler({ payload: { sessionId: 42, eventId: 101 } });
     expect(captured).toEqual([{ sessionId: 42, eventId: 101 }]);
   });
+});
+
+test("[ADR-0020.D2] sessionSetConcise invokes the right command and args", async () => {
+  const before = invoked.length;
+  await sessionSetConcise(42, true);
+  expect(invoked.slice(before)).toEqual([
+    { cmd: "session_set_concise", args: { sessionId: 42, enabled: true } },
+  ]);
+  await sessionSetConcise(42, false);
+  expect(invoked.slice(before + 1)).toEqual([
+    { cmd: "session_set_concise", args: { sessionId: 42, enabled: false } },
+  ]);
 });

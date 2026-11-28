@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, GitBranch, PanelRight, Search, Settings2 } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronRight, GitBranch, PanelRight, Search, Settings2 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
@@ -13,9 +13,9 @@ import { ProjectTree } from "./components/layout/ProjectTree";
 import { RightPanel } from "./components/layout/RightPanel";
 import { StatusBar } from "./components/layout/StatusBar";
 import { addProjectFromPicker, projectTree, projectUnassignedSessions, type Project, type ProjectSession } from "./features/project/api";
-import { approvePlan, createSession, getPlan, listSessions, setSessionWorktree, startDirectRun } from "./features/session/api";
+import { approvePlan, createSession, getPlan, listSessions, sessionSetConcise, setSessionWorktree, startDirectRun } from "./features/session/api";
 import { PLAN_COMPOSER_PLACEHOLDER, PlanCard, showsPlanCard } from "./features/session/PlanCard";
-import { buildOneTaskPlan, getComposerHarnessOptions, sendState } from "./features/session/composer";
+import { buildOneTaskPlan, getComposerHarnessOptions, phaseStepState, sendState, toggleSessionConcise } from "./features/session/composer";
 import { AgentDetailView, AgentRightPanel, SubAgentCard } from "./features/agent-detail";
 import { fetchIncrementalEvents, loadSessionEvents, mergeEvents, partitionChatTimeline } from "./features/agent-detail/timeline";
 import { listDetectedHarnesses, type DetectedHarness } from "./features/agent/api";
@@ -308,6 +308,20 @@ export default function App() {
       setConversation((current) => ({ ...current, sessions: current.sessions.map((item) => item.id === updated.id ? { ...item, ...updated } : item) })); setError(null);
     } catch (reason) { setError(`Could not update worktree setting: ${String(reason)}`); }
   }
+  async function toggleConcise() {
+    if (!activeSession) return;
+    await toggleSessionConcise<Session>(
+      activeSession.id,
+      (updater) => {
+        setConversation((current) => {
+          const next = updater({ sessions: current.sessions, error });
+          setError(next.error);
+          return { ...current, sessions: next.sessions };
+        });
+      },
+      sessionSetConcise
+    );
+  }
   async function approveCurrentPlan(revision: number) {
     if (!activeSession || approvingSessionId !== null) return;
     const sessionId = activeSession.id;
@@ -379,7 +393,7 @@ export default function App() {
             <SidebarFooter className="border-t p-2">{!leftCollapsed && <Button variant="ghost" className="justify-start" onClick={() => setView({ kind: "settings" })}><Settings2 /><span>Settings ⌘,</span></Button>}<Button variant="ghost" className="justify-start" onClick={() => { const value = !leftCollapsed; setLeftCollapsed(value); localStorage.setItem(storage.leftCollapsed, String(value)); }}><PanelRight />{!leftCollapsed && <span>Collapse ⌘B</span>}</Button></SidebarFooter>
           </Sidebar>
           {!leftCollapsed && <div role="separator" aria-label="Resize project sidebar" aria-orientation="vertical" aria-valuenow={Math.round(widths.left / windowWidth * 100)} aria-valuemin={Math.round(geometry.left.min / windowWidth * 100)} aria-valuemax={Math.round(geometry.left.max / windowWidth * 100)} tabIndex={0} className="w-1 shrink-0 cursor-col-resize hover:bg-ring focus-visible:bg-ring" onDoubleClick={() => { localStorage.removeItem(storage.left); setLeftFraction(null); }} onKeyDown={(event) => resizeKey(event, "left", leftFraction)} onPointerDown={(event) => beginResize(event, "left")} />}
-          <main data-region="content" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">{view.kind === "settings" ? <SettingsView onClose={() => setView({ kind: "main" })} /> : view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentDetailView session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} onBack={() => setView({ kind: "main" })} /> : <><TopBar session={activeSession} plan={activePlan} project={activeProject} collapsed={effectiveRightCollapsed} onToggle={() => { const next = !rightCollapsed; setRightCollapsed(next); localStorage.setItem(storage.rightCollapsed, String(next)); }} /><Chat session={activeSession} plan={activePlan} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} scrollRef={chatScrollRef} nonGit={activeProject?.isGit === false} busy={approvingSessionId === activeSessionId && activeSessionId !== null} stoppingTaskId={stoppingTaskId} onStop={(taskId) => void stopChatTask(taskId)} onApprove={(revision) => void approveCurrentPlan(revision)} onOpenAgent={(taskId) => setView({ kind: "agent", taskId })} prompt={prompt} onPromptChange={setPrompt} onToggleWorktree={toggleWorktree} onCreateSession={() => { const project = activeProject ?? projects[0]; if (project) void createNewSession(project); }} error={error} loading={loading} harnesses={detectedHarnesses} selectedHarness={selectedHarness} onSelectHarness={setSelectedHarness} onSend={() => void handleSend()} onPermission={(taskId, requestId, decision) => { if (activeSession) void runnerRespondPermission(activeSession.id, taskId, requestId, decision).catch((reason) => setError(`Could not respond to permission: ${String(reason)}`)); }} onMode={(taskId, modeId) => { if (activeSession) void runnerSetMode(activeSession.id, taskId, modeId).catch((reason) => setError(`Could not change mode: ${String(reason)}`)); }} /></>}</main>
+          <main data-region="content" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">{view.kind === "settings" ? <SettingsView onClose={() => setView({ kind: "main" })} /> : view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentDetailView session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} onBack={() => setView({ kind: "main" })} /> : <><TopBar session={activeSession} plan={activePlan} project={activeProject} collapsed={effectiveRightCollapsed} onToggle={() => { const next = !rightCollapsed; setRightCollapsed(next); localStorage.setItem(storage.rightCollapsed, String(next)); }} /><Chat session={activeSession} plan={activePlan} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} scrollRef={chatScrollRef} nonGit={activeProject?.isGit === false} busy={approvingSessionId === activeSessionId && activeSessionId !== null} stoppingTaskId={stoppingTaskId} onStop={(taskId) => void stopChatTask(taskId)} onApprove={(revision) => void approveCurrentPlan(revision)} onOpenAgent={(taskId) => setView({ kind: "agent", taskId })} prompt={prompt} onPromptChange={setPrompt} onToggleWorktree={toggleWorktree} onToggleConcise={toggleConcise} onCreateSession={() => { const project = activeProject ?? projects[0]; if (project) void createNewSession(project); }} error={error} loading={loading} harnesses={detectedHarnesses} selectedHarness={selectedHarness} onSelectHarness={setSelectedHarness} onSend={() => void handleSend()} onPermission={(taskId, requestId, decision) => { if (activeSession) void runnerRespondPermission(activeSession.id, taskId, requestId, decision).catch((reason) => setError(`Could not respond to permission: ${String(reason)}`)); }} onMode={(taskId, modeId) => { if (activeSession) void runnerSetMode(activeSession.id, taskId, modeId).catch((reason) => setError(`Could not change mode: ${String(reason)}`)); }} /></>}</main>
           {view.kind !== "settings" && !effectiveRightCollapsed && <><div role="separator" aria-label="Resize contextual panel" aria-orientation="vertical" aria-valuenow={Math.round(widths.right / windowWidth * 100)} aria-valuemin={Math.round(geometry.right.min / windowWidth * 100)} aria-valuemax={Math.round(geometry.right.max / windowWidth * 100)} tabIndex={0} className="w-1 shrink-0 cursor-col-resize hover:bg-ring focus-visible:bg-ring" onDoubleClick={() => { localStorage.removeItem(storage.right); setRightFraction(null); }} onKeyDown={(event) => resizeKey(event, "right", rightFraction)} onPointerDown={(event) => beginResize(event, "right")} />
           <div data-region="right" className="h-full min-h-0 shrink-0 overflow-hidden w-(--right-width)" style={{ "--right-width": regionWidthCss("right", rightFraction) } as React.CSSProperties}>{view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentRightPanel session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} /> : <RightPanel onUseAsPrompt={setPrompt} />}</div></>}
         </SidebarProvider>
@@ -418,7 +432,40 @@ export function TopBar({ session, plan, project, collapsed, onToggle }: { sessio
   return <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
     <div className="flex min-w-0 items-center gap-2 text-sm"><span className="truncate text-muted-foreground">{project?.name ?? "Projects"}</span>{session && <><ChevronRight className="size-3.5 text-muted-foreground" /><span className="truncate">{session.title}</span></>}</div>
     {session?.optInWorktree && <span className="ml-2 inline-flex items-center gap-1 rounded border px-2 py-1 text-xs"><GitBranch className="size-3" />{session.worktreeBranch ? <span className="font-mono">{session.worktreeBranch}</span> : "Worktree on"}</span>}
-    <div className="ml-auto flex items-center gap-3" aria-label="Plan phases">{(["Plan", "Approve", "Build", "Review"] as const).map((step) => <span key={step} aria-current={phase === step ? "step" : undefined} className={phase === step ? "text-foreground" : "text-muted-foreground"}>{step}</span>)}{phase === "Rejected" || phase === "Closed" || phase === "Cancelled" ? <span>{phase}</span> : null}</div>
+    <div className="ml-auto flex items-center" aria-label="Plan phases">
+      {(["Plan", "Approve", "Build", "Review"] as const).map((step, idx) => {
+        const state = phaseStepState(phase, step);
+        return (
+          <span key={step} className="flex items-center">
+            {idx > 0 && <span className="h-px w-3 bg-border" />}
+            <span
+              aria-current={state === "current" ? "step" : undefined}
+              className={`inline-flex h-6 items-center gap-1.5 rounded-full px-2 text-xs ${
+                state === "current"
+                  ? "bg-surface-elevated font-medium text-foreground"
+                  : state === "done"
+                  ? "text-foreground"
+                  : "text-muted-foreground"
+              }`}
+            >
+              <span
+                className={`size-1.5 rounded-full ${
+                  state === "current"
+                    ? "bg-warning"
+                    : state === "done"
+                    ? "bg-success"
+                    : "bg-muted-foreground"
+                }`}
+              />
+              {step}
+            </span>
+          </span>
+        );
+      })}
+      {phase === "Rejected" || phase === "Closed" || phase === "Cancelled" ? (
+        <span className="ml-2 text-xs text-muted-foreground">{phase}</span>
+      ) : null}
+    </div>
     <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" aria-label="Toggle right panel ⌥⌘B" aria-pressed={!collapsed} onClick={onToggle}><PanelRight /></Button></TooltipTrigger><TooltipContent>Toggle right panel ⌥⌘B</TooltipContent></Tooltip>
   </header>;
 }
@@ -433,6 +480,7 @@ export interface ChatProps {
   prompt: string;
   onPromptChange: (value: string) => void;
   onToggleWorktree: () => void;
+  onToggleConcise?: () => void;
   onCreateSession: () => void;
   error: string | null;
   loading: boolean;
@@ -461,6 +509,7 @@ export function Chat({
   prompt,
   onPromptChange,
   onToggleWorktree,
+  onToggleConcise,
   onCreateSession,
   error,
   loading,
@@ -508,7 +557,6 @@ export function Chat({
       <div className="mx-auto flex w-full flex-col gap-5 px-6 py-8 max-w-(--chat-max-width)" style={{ "--chat-max-width": "calc(720 * var(--fw))" } as React.CSSProperties}>
         {error && <p role="alert" className="text-sm text-muted-foreground">{error}</p>}
         {!session ? <div className="flex flex-col items-center gap-3 py-20 text-center text-sm text-muted-foreground">{loading ? "Loading sessions…" : "No session selected. Choose a project to create a session."}<Button variant="outline" onClick={onCreateSession} disabled={!session && loading}>New session</Button></div> : <>
-          <p className="font-mono text-sm text-muted-foreground">{session.workspacePath}</p>
           {showsPlanCard(plan) && plan && <PlanCard plan={plan} busy={busy} onApprove={onApprove} />}
           {plan?.tasks_started && tasks.length > 1 && tasks.map((item) => <SubAgentCard key={item.id} task={item} onOpen={() => onOpenAgent(item.id)} />)}
           {task && plan?.tasks_started && <Button type="button" variant="outline" onClick={() => onOpenAgent(task.id)}>Open agent</Button>}
@@ -517,17 +565,42 @@ export function Chat({
           {eventsTruncated && <p role="status">Showing the first 5,000 events</p>}
           {chatItems.map(({ task: itemTask, event }) => {
             const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {};
-            if (event.kind !== "permission_request") return <div key={event.id} className={event.kind === "user_message" ? "self-end rounded-lg bg-primary p-3 text-primary-foreground" : "self-start rounded-lg border p-3"}><p className="whitespace-pre-wrap">{typeof payload.text === "string" ? payload.text : ""}</p></div>;
+            if (event.kind === "user_message") {
+              return (
+                <div key={event.id} data-chat-role="user" className="self-end max-w-[80%] rounded-lg bg-surface-elevated px-3 py-2 text-sm text-foreground">
+                  <p className="whitespace-pre-wrap">{typeof payload.text === "string" ? payload.text : ""}</p>
+                </div>
+              );
+            }
+            if (event.kind === "agent_message") {
+              return (
+                <div key={event.id} data-chat-role="assistant" className="text-sm text-foreground">
+                  <p className="whitespace-pre-wrap">{typeof payload.text === "string" ? payload.text : ""}</p>
+                </div>
+              );
+            }
             const requestId = String(payload.request_id ?? event.id);
-            return <div key={event.id} className="rounded-lg border p-3 text-sm"><p>Permission required: {typeof payload.operation === "string" ? payload.operation : "Operation"} {typeof payload.target === "string" ? payload.target : ""}</p><div className="flex gap-2 pt-2"><Button type="button" size="sm" variant="outline" disabled={payload.can_deny === false} onClick={() => onPermission?.(itemTask.id, requestId, "deny")}>Deny</Button><Button type="button" size="sm" disabled={payload.can_allow === false} onClick={() => onPermission?.(itemTask.id, requestId, "allow")}>Allow</Button>{payload.allow_always === true && <Button type="button" size="sm" variant="outline" onClick={() => onPermission?.(itemTask.id, requestId, "allow_always")}>Always allow</Button>}</div></div>;
+            const operation = typeof payload.operation === "string" ? payload.operation : "";
+            const target = typeof payload.target === "string" ? payload.target : "";
+            return (
+              <div key={event.id} className="rounded-lg border border-warning/45 bg-card p-3 text-sm">
+                <div className="mb-2 text-[11px] font-medium text-warning">PERMISSION REQUIRED</div>
+                <p>{[operation, target].filter(Boolean).join(" ") || "Operation requested"}</p>
+                <div className="flex gap-2 pt-2">
+                  <Button type="button" size="sm" variant="outline" disabled={payload.can_deny === false} onClick={() => onPermission?.(itemTask.id, requestId, "deny")}>Deny</Button>
+                  <Button type="button" size="sm" disabled={payload.can_allow === false} onClick={() => onPermission?.(itemTask.id, requestId, "allow")}>Allow</Button>
+                  {payload.allow_always === true && <Button type="button" size="sm" variant="outline" onClick={() => onPermission?.(itemTask.id, requestId, "allow_always")}>Always allow</Button>}
+                </div>
+              </div>
+            );
           })}
           {tasks.some((item) => item.status === "running") && <p role="status" className="text-sm text-muted-foreground">Agent working…</p>}
-          {activityItems.length > 0 && <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer">Activity ({activityItems.length})</summary><ul className="mt-2 space-y-1 text-xs text-muted-foreground">{activityItems.map((event) => { const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {}; const detail = [payload.tool, payload.target, payload.text, payload.status].find((value) => typeof value === "string"); return <li key={event.id} className="truncate">{event.kind}{typeof detail === "string" ? `: ${detail}` : ""}</li>; })}</ul></details>}
+          {activityItems.length > 0 && <details className="rounded-lg border border-border bg-card p-3 text-sm"><summary className="cursor-pointer">Activity ({activityItems.length})</summary><ul className="mt-2 space-y-1 text-xs text-muted-foreground">{activityItems.map((event) => { const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {}; const detail = [payload.tool, payload.target, payload.text, payload.status].find((value) => typeof value === "string"); return <li key={event.id} className="truncate">{event.kind}{typeof detail === "string" ? `: ${detail}` : ""}</li>; })}</ul></details>}
         </>}
       </div>
     </section>
     <div className="mx-auto w-full px-6 pb-5 max-w-(--chat-max-width)" style={{ "--chat-max-width": "calc(720 * var(--fw))" } as React.CSSProperties}>
-      <form onSubmit={(event) => { event.preventDefault(); if (!sendDisabled && onSend) onSend(); }} className="rounded-lg border bg-background focus-within:ring-1 focus-within:ring-ring">
+      <form onSubmit={(event) => { event.preventDefault(); if (!sendDisabled && onSend) onSend(); }} className="rounded-lg border border-input bg-background focus-within:ring-1 focus-within:ring-ring">
         <Textarea aria-label="Prompt" value={prompt} onChange={(event) => onPromptChange(event.target.value)} placeholder={showsPlanCard(plan) ? PLAN_COMPOSER_PLACEHOLDER : "Describe the goal…"} className="min-h-16 resize-none border-0 shadow-none focus-visible:ring-0" />
         {currentSendState.reason && (
           <p id="send-disabled-reason" className="px-3 text-xs text-muted-foreground">{currentSendState.reason}</p>
@@ -569,8 +642,9 @@ export function Chat({
             </DropdownMenuContent>
           </DropdownMenu>
           {task && modes.length > 0 && <label className="text-xs">Mode <select aria-label="Mode" value={currentMode ?? ""} onChange={(event) => onMode?.(task.id, event.target.value)} className="rounded border bg-background p-1">{currentMode === null && <option value="" disabled>Select mode</option>}{modes.map((mode) => <option key={mode.id} value={mode.id}>{mode.name}</option>)}</select></label>}
+          <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={session?.conciseReplies ?? false} onCheckedChange={onToggleConcise} disabled={!session} />Concise</label>
           <label title={nonGit ? "Not a git repository: worktree isolation is unavailable" : undefined} className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={!nonGit && (session?.optInWorktree ?? false)} onCheckedChange={onToggleWorktree} disabled={!session || nonGit} />Worktree{nonGit && <span>Not a git repository: worktree isolation is unavailable</span>}</label>
-          <Button type="submit" disabled={sendDisabled} aria-describedby={currentSendState.reason ? "send-disabled-reason" : undefined} className="ml-auto"><span>Send</span></Button>
+          <Button type="submit" size="icon-sm" disabled={sendDisabled} aria-label="Send" aria-describedby={currentSendState.reason ? "send-disabled-reason" : undefined} className="ml-auto"><ArrowUp className="size-4" /></Button>
         </div>
       </form>
     </div>

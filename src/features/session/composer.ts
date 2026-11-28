@@ -79,3 +79,73 @@ export function getComposerHarnessOptions(harnesses: DetectedHarness[]): Compose
       harness: h,
     }));
 }
+
+/** @adr ADR-0018.D1 */
+export function phaseStepState(
+  phase: Plan["phase"] | null | undefined,
+  step: "Plan" | "Approve" | "Build" | "Review"
+): "done" | "current" | "upcoming" {
+  const steps = ["Plan", "Approve", "Build", "Review"] as const;
+  const stepIndex = steps.indexOf(step);
+  const phaseIndex = phase ? steps.indexOf(phase as (typeof steps)[number]) : -1;
+
+  if (phaseIndex === -1) {
+    return "upcoming";
+  }
+  if (stepIndex < phaseIndex) {
+    return "done";
+  }
+  if (stepIndex === phaseIndex) {
+    return "current";
+  }
+  return "upcoming";
+}
+
+/** @adr ADR-0020.D2 */
+export interface ToggleSessionConciseState<S extends { id: number; conciseReplies: boolean } = { id: number; conciseReplies: boolean }> {
+  sessions: S[];
+  error: string | null;
+}
+
+/** @adr ADR-0020.D2 */
+export async function toggleSessionConcise<S extends { id: number; conciseReplies: boolean }>(
+  sessionId: number,
+  mutateState: (updater: (prev: ToggleSessionConciseState<S>) => ToggleSessionConciseState<S>) => void,
+  invokeApi: (sessionId: number, enabled: boolean) => Promise<void>
+): Promise<boolean> {
+  let previousValue = false;
+  let nextValue = true;
+
+  mutateState((prev) => {
+    const currentSession = prev.sessions.find((s) => s.id === sessionId);
+    previousValue = currentSession?.conciseReplies ?? false;
+    nextValue = !previousValue;
+    return {
+      ...prev,
+      sessions: prev.sessions.map((s) => (s.id === sessionId ? { ...s, conciseReplies: nextValue } : s)),
+      error: null,
+    };
+  });
+
+  try {
+    await invokeApi(sessionId, nextValue);
+    return true;
+  } catch (reason) {
+    mutateState((prev) => {
+      const currentSession = prev.sessions.find((s) => s.id === sessionId);
+      // Only roll back if the session still holds the attempted value from this toggle
+      if (currentSession && currentSession.conciseReplies === nextValue) {
+        return {
+          ...prev,
+          sessions: prev.sessions.map((s) => (s.id === sessionId ? { ...s, conciseReplies: previousValue } : s)),
+          error: `Could not update concise setting: ${String(reason)}`,
+        };
+      }
+      return {
+        ...prev,
+        error: `Could not update concise setting: ${String(reason)}`,
+      };
+    });
+    return false;
+  }
+}

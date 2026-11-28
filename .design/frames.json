@@ -98,5 +98,28 @@
       ],
       "notes": "Detected subscriptions, rule-based team generation with preview, editable teams with ordered fallback chains."
     }
+    ,
+    {
+      "id": "chat",
+      "title": "Chat",
+      "file": "frames/chat.html",
+      "group": "layout-v5",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "position": {
+        "x": 1600,
+        "y": 2120
+      },
+      "status": "approved",
+      "links": [
+        {
+          "to": "project-tree-shadcn",
+          "label": "Back"
+        }
+      ],
+      "notes": "Chat view for ADR-0018.D4, added at the user's approval. Clean elevated user bubble, borderless assistant message, collapsed Activity details, pending permission card, and composer with concise toggle."
+    }
   ]
 }

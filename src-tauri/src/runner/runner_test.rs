@@ -114,8 +114,8 @@ for line in sys.stdin:
             update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':prompt_text}})
             reply(prompt_id, {'stopReason':'end_turn'})
             continue
-        if scenario == 'inspect':
-            update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps({'cwd':cwd,'prompt':prompt_text})}})
+        if scenario in ('inspect', 'multi_turn_inspect'):
+            update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps({'cwd':cwd,'prompt':prompt_text,'turn':turn})}})
             reply(prompt_id, {'stopReason':'end_turn'})
             continue
         if scenario == 'capabilities':
@@ -461,6 +461,9 @@ fn worktree_cwd_and_prompt_are_the_agent_received_values() {
         }
         let (runner, session_id, control, stop, mut task) = setup();
         task.worktree = true;
+        task.files = vec!["src/lib.rs".into()];
+        session::propose(&runner.store, session_id, vec![task.clone()]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
         let worker = runner.clone();
         let root_str = root.to_str().unwrap().to_string();
         let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task, &root_str, control, stop, launch("inspect"), Duration::from_secs(5)).await });
@@ -471,9 +474,9 @@ fn worktree_cwd_and_prompt_are_the_agent_received_values() {
         assert_eq!(received["cwd"], handoff.payload["handoff"]["worktree_path"]);
         assert!(std::path::Path::new(received["cwd"].as_str().unwrap()).is_absolute());
         let prompt = received["prompt"].as_str().unwrap();
-        assert!(prompt.contains("Do the task"));
-        assert!(!prompt.contains("None"));
-        assert!(!prompt.contains("Files:"));
+        assert!(prompt.starts_with("Goal: Do the task\n"));
+        assert!(prompt.contains("Files:\n- src/lib.rs"));
+        assert!(prompt.contains("Worktree:"));
         assert!(events.iter().all(|event| event.kind != "usage"));
         let path = handoff.payload["handoff"]["worktree_path"].as_str().unwrap();
         runner.stop(session_id, "task").unwrap();
@@ -1177,4 +1180,170 @@ fn session_transition_allows_review_to_running() {
     session::transition(&store, session, "task-1", "running").unwrap();
     session::transition(&store, session, "task-1", "review").unwrap();
     assert_eq!(session::transition(&store, session, "task-1", "running").unwrap().tasks[0].status, "running");
+}
+
+#[test]
+fn adr0020_single_task_chat_message_reaches_agent_unchanged() {
+    // [ADR-0020.D1] a single-task chat message reaches the agent exactly as typed
+    tauri::async_runtime::block_on(async {
+        let (runner, session_id, control, stop, task) = setup();
+        let prompt_raw = "Hello assistant, how are you?";
+        let mut task = task;
+        task.title = prompt_raw.into();
+        task.files = vec![];
+        session::propose(&runner.store, session_id, vec![task.clone()]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        let worker = runner.clone();
+        let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task, &cwd, control, stop, launch("inspect"), Duration::from_secs(5)).await });
+        let events = wait_for(&runner.store, session_id, "agent_message", 1).await;
+        let received_text = events.iter().find(|e| e.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(received_text).unwrap();
+        assert_eq!(parsed["prompt"], prompt_raw);
+        runner.stop(session_id, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
+    });
+}
+
+#[test]
+fn adr0020_multi_task_and_task_with_files_keep_wrapper() {
+    // [ADR-0020.D1] a two-task plan and a task with files keep the Goal/Files/Worktree wrapper
+    tauri::async_runtime::block_on(async {
+        // Case 1: Multi-task plan (2 tasks) without files still uses wrapper
+        {
+            let (runner, session_id, control, stop, task1) = setup();
+            let task2 = PlanTask { id: "task2".into(), title: "Second".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+            session::propose(&runner.store, session_id, vec![task1.clone(), task2]).unwrap();
+            session::approve(&runner.store, session_id, 1).unwrap();
+            let worker = runner.clone();
+            let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+            let task1_run = task1.clone();
+            let cwd_run = cwd.clone();
+            let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task1_run, &cwd_run, control, stop, launch("inspect"), Duration::from_secs(5)).await });
+            let events = wait_for(&runner.store, session_id, "agent_message", 1).await;
+            let received = events.iter().find(|e| e.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(received).unwrap();
+            let prompt = parsed["prompt"].as_str().unwrap();
+            assert!(prompt.starts_with(&format!("Goal: {}\n", task1.title)));
+            let expected_cwd = std::path::Path::new(&cwd).canonicalize().unwrap();
+            assert!(prompt.contains(&format!("Worktree: {}", expected_cwd.display())));
+            runner.stop(session_id, "task").unwrap();
+            assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
+        }
+        // Case 2: Single-task plan but with files keeps wrapper
+        {
+            let (runner, session_id, control, stop, mut task) = setup();
+            task.files = vec!["README.md".into()];
+            session::propose(&runner.store, session_id, vec![task.clone()]).unwrap();
+            session::approve(&runner.store, session_id, 1).unwrap();
+            let worker = runner.clone();
+            let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+            let task_run = task.clone();
+            let cwd_run = cwd.clone();
+            let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task_run, &cwd_run, control, stop, launch("inspect"), Duration::from_secs(5)).await });
+            let events = wait_for(&runner.store, session_id, "agent_message", 1).await;
+            let received = events.iter().find(|e| e.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(received).unwrap();
+            let prompt = parsed["prompt"].as_str().unwrap();
+            assert!(prompt.starts_with(&format!("Goal: {}\n", task.title)));
+            assert!(prompt.contains("Files:\n- README.md"));
+            let expected_cwd = std::path::Path::new(&cwd).canonicalize().unwrap();
+            assert!(prompt.contains(&format!("Worktree: {}", expected_cwd.display())));
+            runner.stop(session_id, "task").unwrap();
+            assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
+        }
+    });
+}
+
+#[test]
+fn adr0020_concise_replies_prepends_instruction_and_toggling_applies_dynamically() {
+    // [ADR-0020.D2] with the setting on the agent receives the line plus blank line plus text, for the first prompt and for a follow-up
+    // [ADR-0020.D2] toggling off stops it
+    // [ADR-0020.D2] the user_message event contains only the typed text
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, task) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        runner.store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id]).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("multi_turn_inspect")));
+
+        // Enable concise replies
+        runner.store.set_session_concise(session_id, true).unwrap();
+        assert!(runner.store.session_concise(session_id).unwrap());
+
+        let mut task = task;
+        task.title = "First question".into();
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        assert_eq!(runner.start(session_id).unwrap(), ["task"]);
+
+        // Wait for first turn to hit review
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            if runner.plan(session_id).unwrap().unwrap().tasks[0].status == "review" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        let user_msgs: Vec<_> = events.iter().filter(|e| e.kind == "user_message").collect();
+        assert_eq!(user_msgs.len(), 1);
+        // [ADR-0020.D2] the user_message event contains only the typed text
+        assert_eq!(user_msgs[0].payload["text"], "First question");
+
+        let agent_msg1 = events.iter().find(|e| e.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
+        let parsed1: serde_json::Value = serde_json::from_str(agent_msg1).unwrap();
+        let prompt1 = parsed1["prompt"].as_str().unwrap();
+        // [ADR-0020.D2] agent receives instruction line plus blank line plus text on first prompt
+        assert_eq!(prompt1, "Keep replies short and direct. Do not describe the repository or your tools unless asked.\n\nFirst question");
+
+        // Send follow-up while concise is still on
+        runner.send(session_id, "task", "Second question".into()).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let events = runner.store.events(session_id, 0, 1000).unwrap();
+            if events.iter().filter(|e| e.kind == "agent_message").count() >= 2 {
+                let plan = runner.plan(session_id).unwrap().unwrap();
+                if plan.tasks[0].status == "review" { break; }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        let user_msgs: Vec<_> = events.iter().filter(|e| e.kind == "user_message").collect();
+        assert_eq!(user_msgs.len(), 2);
+        assert_eq!(user_msgs[1].payload["text"], "Second question");
+
+        let agent_msgs: Vec<_> = events.iter().filter(|e| e.kind == "agent_message").collect();
+        let parsed2: serde_json::Value = serde_json::from_str(agent_msgs[1].payload["text"].as_str().unwrap()).unwrap();
+        let prompt2 = parsed2["prompt"].as_str().unwrap();
+        // [ADR-0020.D2] follow up prompt also receives instruction line
+        assert_eq!(prompt2, "Keep replies short and direct. Do not describe the repository or your tools unless asked.\n\nSecond question");
+
+        // Now toggle concise replies OFF dynamically mid-session
+        runner.store.set_session_concise(session_id, false).unwrap();
+        assert!(!runner.store.session_concise(session_id).unwrap());
+
+        // Send third question
+        runner.send(session_id, "task", "Third question".into()).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let events = runner.store.events(session_id, 0, 1000).unwrap();
+            if events.iter().filter(|e| e.kind == "agent_message").count() >= 3 {
+                let plan = runner.plan(session_id).unwrap().unwrap();
+                if plan.tasks[0].status == "review" { break; }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        let user_msgs: Vec<_> = events.iter().filter(|e| e.kind == "user_message").collect();
+        assert_eq!(user_msgs.len(), 3);
+        assert_eq!(user_msgs[2].payload["text"], "Third question");
+
+        let agent_msgs: Vec<_> = events.iter().filter(|e| e.kind == "agent_message").collect();
+        let parsed3: serde_json::Value = serde_json::from_str(agent_msgs[2].payload["text"].as_str().unwrap()).unwrap();
+        let prompt3 = parsed3["prompt"].as_str().unwrap();
+        // [ADR-0020.D2] toggling off stops it
+        assert_eq!(prompt3, "Third question");
+
+        runner.shutdown();
+    });
 }

@@ -23,7 +23,7 @@ function Glyph({ item }: { item: ProjectSession }) {
   const glyph = sessionGlyph(item);
   if (glyph === "done") return <span className="grid size-3.5 shrink-0 place-items-center"><Check aria-label={glyph} className="size-3.5 text-success" /></span>;
   const color = glyph === "needs-approval" ? "text-warning" : glyph === "failed" ? "text-danger" : "text-muted-foreground";
-  return <span className="grid size-3.5 shrink-0 place-items-center"><span aria-label={glyph} className={glyph === "idle" ? `size-2 rounded-full border border-current ${color}` : `size-1.75 rounded-full bg-current ${color}`} /></span>;
+  return <span className="grid size-4 shrink-0 place-items-center"><span aria-label={glyph} className={glyph === "idle" ? `size-2 rounded-full border border-current ${color}` : `size-2 rounded-full bg-current ${color}`} /></span>;
 }
 
 function sessionMeta(activity: string) {
@@ -52,7 +52,7 @@ export function ProjectTree({ projects, sessionsByProject, unassignedSessions = 
         return <SidebarMenu key={project.id}>
           <SidebarMenuItem>
             <SidebarMenuButton onClick={() => onToggleProject(project.id, !isOpen)} aria-expanded={isOpen}><span>{isOpen ? <ChevronDown /> : <ChevronRight />}</span><span>{project.name}</span>{!project.isGit && <span title="Not a git repository: worktree isolation is unavailable" aria-label="Not a git repository: worktree isolation is unavailable"><TriangleAlert className="text-warning" /></span>}</SidebarMenuButton>
-            {isOpen && <div className="ml-5 border-l pl-2">
+            {isOpen && <div className="my-0.5 mb-1.5 ml-[17px] border-l border-border pl-2">
               {sessions.map((item) => <SidebarMenuItem key={item.id}>
                 <SidebarMenuButton className="h-7" isActive={item.id === activeSessionId} onClick={() => onSelectSession(item.id)} title={item.title}>
                   <Glyph item={item} /><span>{item.title}</span><span className="ml-auto text-xs text-muted-foreground">{sessionMeta(item.lastActivityAt)}</span>

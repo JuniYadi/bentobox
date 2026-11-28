@@ -65,6 +65,7 @@ pub fn run() {
             session::session_create,
             session::session_list,
             session::session_set_worktree,
+            session::session_set_concise,
             runner::runner_start,
             runner::runner_stop,
             runner::runner_respond_permission,

@@ -4,7 +4,9 @@ import type { Plan } from "./types";
 import {
   buildOneTaskPlan,
   getComposerHarnessOptions,
+  phaseStepState,
   sendState,
+  toggleSessionConcise,
 } from "./composer";
 
 const sampleHarnesses: DetectedHarness[] = [
@@ -213,4 +215,91 @@ test("[ADR-0018.D1] a multi-task plan awaiting approval blocks direct send", () 
   const state = sendState({ text: "Another message", harness: "omp", plan });
   expect(state.enabled).toBe(false);
   expect(state.reason).toContain("Plan in progress");
+});
+
+describe("[ADR-0018.D1] phaseStepState", () => {
+  test("classifies steps into done, current, or upcoming", () => {
+    expect(phaseStepState("Plan", "Plan")).toBe("current");
+    expect(phaseStepState("Plan", "Approve")).toBe("upcoming");
+    expect(phaseStepState("Build", "Plan")).toBe("done");
+    expect(phaseStepState("Build", "Approve")).toBe("done");
+    expect(phaseStepState("Build", "Build")).toBe("current");
+    expect(phaseStepState("Build", "Review")).toBe("upcoming");
+    expect(phaseStepState(null, "Plan")).toBe("upcoming");
+    expect(phaseStepState("Rejected", "Plan")).toBe("upcoming");
+  });
+});
+
+describe("[ADR-0020.D2] toggleSessionConcise", () => {
+  test("toggles concise setting optimistically and invokes API once", async () => {
+    const calls: Array<{ id: number; enabled: boolean }> = [];
+    let state = { sessions: [{ id: 1, conciseReplies: false }], error: null as string | null };
+    const mutate = (updater: (prev: typeof state) => typeof state) => {
+      state = updater(state);
+    };
+
+    const ok = await toggleSessionConcise(
+      1,
+      mutate,
+      async (id, enabled) => {
+        calls.push({ id, enabled });
+      }
+    );
+
+    expect(ok).toBe(true);
+    expect(calls).toEqual([{ id: 1, enabled: true }]);
+    expect(state.sessions[0].conciseReplies).toBe(true);
+    expect(state.error).toBeNull();
+  });
+
+  test("rolls back and shows error banner on failure", async () => {
+    let state = { sessions: [{ id: 1, conciseReplies: false }], error: null as string | null };
+    const mutate = (updater: (prev: typeof state) => typeof state) => {
+      state = updater(state);
+    };
+
+    const ok = await toggleSessionConcise(
+      1,
+      mutate,
+      async () => {
+        throw new Error("backend failed");
+      }
+    );
+
+    expect(ok).toBe(false);
+    expect(state.sessions[0].conciseReplies).toBe(false);
+    expect(state.error).toContain("backend failed");
+  });
+
+  test("rapid toggle: does not overwrite a newer toggle state on delayed failure", async () => {
+    let state = { sessions: [{ id: 1, conciseReplies: false }], error: null as string | null };
+    const mutate = (updater: (prev: typeof state) => typeof state) => {
+      state = updater(state);
+    };
+
+    // First toggle starts (false -> true) and will fail later
+    const { promise: firstApiPromise, reject: rejectFirst } = Promise.withResolvers<void>();
+    const firstPromise = toggleSessionConcise(
+      1,
+      mutate,
+      () => firstApiPromise
+    );
+    expect(state.sessions[0].conciseReplies).toBe(true);
+
+    // User toggles again before first completes (true -> false), succeeds
+    const secondPromise = toggleSessionConcise(
+      1,
+      mutate,
+      async () => {}
+    );
+    await secondPromise;
+    expect(state.sessions[0].conciseReplies).toBe(false);
+
+    // Now first toggle fails: it should NOT roll back the second toggle's state
+    rejectFirst(new Error("first toggle rejected"));
+    await firstPromise;
+
+    expect(state.sessions[0].conciseReplies).toBe(false);
+    expect(state.error).toContain("first toggle rejected");
+  });
 });

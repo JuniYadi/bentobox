@@ -268,3 +268,37 @@ fn non_git_project_rejects_worktree_opt_in() {
     assert!(set_worktree().unwrap_err().contains("Not a git repository: worktree isolation is unavailable"));
     cleanup(&root);
 }
+
+#[test]
+fn adr0020_concise_setting_persists_across_reopen_and_validates_session_id() {
+    // [ADR-0020.D2] the setting persists across a Store reopen; session_set_concise with an unknown id errors
+    let (store, root) = store();
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::process::Command::new("git").args(["init", "-q"]).current_dir(&repo).status().unwrap();
+    let (repo_root, name) = crate::project::repository_root(&repo).unwrap();
+    let project = store.add_project(&name, &repo_root).unwrap();
+    let session = store.create_named_session("Chat", project.id, "/repo", false).unwrap();
+
+    // Default is false
+    assert!(!session.concise_replies);
+    assert!(!store.session_concise(session.id).unwrap());
+
+    // Error on unknown id
+    assert_eq!(store.set_session_concise(-999, true).unwrap_err(), "unknown session");
+    assert_eq!(store.session_concise(-999).unwrap_err(), "unknown session");
+
+    // Enable concise replies
+    store.set_session_concise(session.id, true).unwrap();
+    assert!(store.session_concise(session.id).unwrap());
+
+    // Survives reopen
+    drop(store);
+    let store = Store::open(root.join("db.sqlite")).unwrap();
+    assert!(store.session_concise(session.id).unwrap());
+    let listed = store.list_sessions().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].concise_replies);
+
+    cleanup(&root);
+}

@@ -38,6 +38,7 @@ const sampleSession: Session & { worktreeBranch?: string } = {
   title: "ACP multi-harness sync",
   workspacePath: "/Users/dev/bentobox",
   optInWorktree: true,
+  conciseReplies: false,
   subAgents: [],
   worktreeBranch: "task/gh-bridge",
 };
@@ -135,6 +136,48 @@ test("[ADR-0018.D4] sub-agent messages and thoughts are always activity", () => 
   const result = partitionChatTimeline(events, sampleTask);
   expect(result.chatItems).toEqual([]);
   expect(result.activityItems).toEqual(events);
+});
+
+test("[ADR-0018.D4] consecutive agent_message events merge into one chat item and a tool_call between them keeps them separate", () => {
+  const make = (id: number, kind: string, payload: Record<string, string | boolean>): DbEvent => ({
+    id,
+    session_id: 42,
+    task_id: null,
+    kind,
+    payload: { plan_task_id: sampleTask.id, ...payload },
+    created_at: `2026-11-28T14:1${id}:00Z`,
+  });
+
+  // Case 1: consecutive agent_message events merge into one item
+  const consecutive = [
+    make(1, "user_message", { text: "Hello" }),
+    make(2, "agent_message", { text: "Part 1 " }),
+    make(3, "agent_message", { text: "Part 2" }),
+  ];
+  const merged = partitionChatTimeline(consecutive, sampleTask);
+  expect(merged.chatItems.length).toBe(2);
+  expect(merged.chatItems[0].kind).toBe("user_message");
+  expect(merged.chatItems[1].id).toBe(2);
+  expect(merged.chatItems[1].created_at).toBe("2026-11-28T14:12:00Z");
+  const mergedPayload = merged.chatItems[1].payload;
+  const mergedText = mergedPayload && typeof mergedPayload === "object" && !Array.isArray(mergedPayload) && "text" in mergedPayload ? mergedPayload.text : null;
+  expect(mergedText).toBe("Part 1 Part 2");
+  // Case 2: a tool_call between them keeps them separate
+  const splitByTool = [
+    make(1, "agent_message", { text: "First reply" }),
+    make(2, "tool_call", { tool: "read" }),
+    make(3, "agent_message", { text: "Second reply" }),
+  ];
+  const split = partitionChatTimeline(splitByTool, sampleTask);
+  expect(split.chatItems.length).toBe(2);
+  expect(split.chatItems[0].id).toBe(1);
+  const firstPayload = split.chatItems[0].payload;
+  const firstText = firstPayload && typeof firstPayload === "object" && !Array.isArray(firstPayload) && "text" in firstPayload ? firstPayload.text : null;
+  expect(firstText).toBe("First reply");
+  expect(split.chatItems[1].id).toBe(3);
+  const secondPayload = split.chatItems[1].payload;
+  const secondText = secondPayload && typeof secondPayload === "object" && !Array.isArray(secondPayload) && "text" in secondPayload ? secondPayload.text : null;
+  expect(secondText).toBe("Second reply");
 });
 
 describe("[ADR-0016.D4] timeline construction", () => {

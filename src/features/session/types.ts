@@ -45,5 +45,6 @@ export interface Session {
   title: string;
   workspacePath: string;
   optInWorktree: boolean;
+  conciseReplies: boolean;
   subAgents: SubAgentTask[];
 }

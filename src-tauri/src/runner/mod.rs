@@ -1,4 +1,6 @@
 // @adr ADR-0017.D1
+// @adr ADR-0020.D1
+// @adr ADR-0020.D2
 mod events;
 
 use crate::{agent, db::Store, session::{self, Plan, PlanTask}, workspace};
@@ -388,9 +390,18 @@ impl Runner {
         if !placeholder.is_empty() {
             let _ = self.store.set_placeholder_title(session_id, &placeholder);
         }
-        let mut prompt = format!("Goal: {}\n", task.title);
-        if !task.files.is_empty() { prompt.push_str("\nFiles:\n"); for path in &task.files { prompt.push_str(&format!("- {path}\n")); } }
-        prompt.push_str(&format!("\nWorktree: {}", cwd.display()));
+        let is_single_task_chat = self.plan(session_id)?.map(|plan| plan.tasks.len() == 1 && task.files.is_empty()).unwrap_or(false);
+        let mut prompt = if is_single_task_chat {
+            task.title.clone()
+        } else {
+            let mut wrapped = format!("Goal: {}\n", task.title);
+            if !task.files.is_empty() { wrapped.push_str("\nFiles:\n"); for path in &task.files { wrapped.push_str(&format!("- {path}\n")); } }
+            wrapped.push_str(&format!("\nWorktree: {}", cwd.display()));
+            wrapped
+        };
+        if self.store.session_concise(session_id).unwrap_or(false) {
+            prompt = apply_concise_instruction(&prompt);
+        }
         {
             let mut events = control.events.lock().map_err(|_| "event lock poisoned")?;
             events.set_branch(branch);
@@ -594,10 +605,19 @@ impl Runner {
                     };
                     let _ = tokio::time::timeout(Duration::from_secs(30), title_gen).await;
                 });
-                let mut next = prompt;
+                let mut next_prompt = prompt;
+                let mut is_first_prompt = true;
                 loop {
                     if *stop.borrow() { *final_outcome.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = ("cancelled", None); return Ok(()); }
-                    let request = connection.send_request(PromptRequest::new(session.session_id.clone(), vec![ContentBlock::Text(TextContent::new(next))])).block_task();
+                    let outgoing = if is_first_prompt {
+                        is_first_prompt = false;
+                        next_prompt.clone()
+                    } else if capability_store.session_concise(session_id).unwrap_or(false) {
+                        apply_concise_instruction(&next_prompt)
+                    } else {
+                        next_prompt.clone()
+                    };
+                    let request = connection.send_request(PromptRequest::new(session.session_id.clone(), vec![ContentBlock::Text(TextContent::new(outgoing))])).block_task();
                     tokio::pin!(request);
                     let response = tokio::select! {
                         result = &mut request => result?,
@@ -625,7 +645,7 @@ impl Runner {
                                     if let Ok(events) = foreground.events.lock() {
                                         let _ = events.append("task_state", json!({"status": "running"}));
                                     }
-                                    next = text;
+                                    next_prompt = text;
                                     break;
                                 }
                                 tokio::select! {
@@ -689,6 +709,14 @@ fn clean_title(raw: &str) -> String {
     } else {
         text.char_indices().nth(60).map(|(i, _)| text[..i].to_string()).unwrap_or(text)
     }
+}
+
+/// @adr ADR-0020.D2
+const CONCISE_INSTRUCTION: &str = "Keep replies short and direct. Do not describe the repository or your tools unless asked.";
+
+/// @adr ADR-0020.D2
+fn apply_concise_instruction(prompt: &str) -> String {
+    format!("{CONCISE_INSTRUCTION}\n\n{prompt}")
 }
 
 #[cfg(test)]

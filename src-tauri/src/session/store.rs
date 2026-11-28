@@ -1,4 +1,5 @@
 // @adr ADR-0010.D1
+// @adr ADR-0020.D2
 use crate::db::Store;
 use rusqlite::{OptionalExtension, params};
 
@@ -22,7 +23,7 @@ impl Store {
 
     pub(crate) fn create_named_session(&self, title: &str, project_id: i64, workspace_path: &str, opt_in_worktree: bool) -> Result<SessionSummary, String> {
         let conn = self.connection()?;
-        let summary = conn.query_row("INSERT INTO sessions (state, title, project_id, workspace_path, opt_in_worktree, created_at) VALUES ('active', ?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING id, title, workspace_path, opt_in_worktree, created_at", params![title, project_id, workspace_path, opt_in_worktree], session_summary).map_err(|e| e.to_string())?;
+        let summary = conn.query_row("INSERT INTO sessions (state, title, project_id, workspace_path, opt_in_worktree, created_at) VALUES ('active', ?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING id, title, workspace_path, opt_in_worktree, created_at, concise_replies", params![title, project_id, workspace_path, opt_in_worktree], session_summary).map_err(|e| e.to_string())?;
         if !title.is_empty() && title != "New session" {
             let _ = conn.execute("INSERT OR REPLACE INTO session_title_state (session_id, custom) VALUES (?1, 1)", [summary.id]);
         }
@@ -53,16 +54,28 @@ impl Store {
 
     pub(crate) fn list_sessions(&self) -> Result<Vec<SessionSummary>, String> {
         let conn = self.connection()?;
-        let mut stmt = conn.prepare("SELECT id, title, workspace_path, opt_in_worktree, created_at FROM sessions ORDER BY id DESC").map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare("SELECT id, title, workspace_path, opt_in_worktree, created_at, concise_replies FROM sessions ORDER BY id DESC").map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], session_summary).map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
     }
 
     pub(crate) fn set_session_worktree(&self, id: i64, enabled: bool) -> Result<SessionSummary, String> {
-        self.connection()?.query_row("UPDATE sessions SET opt_in_worktree = ?2 WHERE id = ?1 RETURNING id, title, workspace_path, opt_in_worktree, created_at", params![id, enabled], session_summary).optional().map_err(|e| e.to_string())?.ok_or_else(|| "unknown session".to_string())
+        self.connection()?.query_row("UPDATE sessions SET opt_in_worktree = ?2 WHERE id = ?1 RETURNING id, title, workspace_path, opt_in_worktree, created_at, concise_replies", params![id, enabled], session_summary).optional().map_err(|e| e.to_string())?.ok_or_else(|| "unknown session".to_string())
+    }
+
+    /// @adr ADR-0020.D2
+    pub(crate) fn set_session_concise(&self, id: i64, enabled: bool) -> Result<(), String> {
+        let changed = self.connection()?.execute("UPDATE sessions SET concise_replies = ?2 WHERE id = ?1", params![id, enabled]).map_err(|e| e.to_string())?;
+        if changed == 0 { return Err("unknown session".into()); }
+        Ok(())
+    }
+
+    /// @adr ADR-0020.D2
+    pub(crate) fn session_concise(&self, id: i64) -> Result<bool, String> {
+        self.connection()?.query_row("SELECT concise_replies FROM sessions WHERE id = ?1", [id], |row| row.get(0)).optional().map_err(|e| e.to_string())?.ok_or_else(|| "unknown session".to_string())
     }
 }
 
 fn session_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
-    Ok(SessionSummary { id: row.get(0)?, title: row.get(1)?, workspace_path: row.get(2)?, opt_in_worktree: row.get(3)?, created_at: row.get(4)? })
+    Ok(SessionSummary { id: row.get(0)?, title: row.get(1)?, workspace_path: row.get(2)?, opt_in_worktree: row.get(3)?, created_at: row.get(4)?, concise_replies: row.get(5)? })
 }
