@@ -58,7 +58,7 @@ D1: **Runner.** A new `runner` module in the Rust backend starts approved plan t
 - **Start.** After `approve`, the runner starts every `queued` task whose dependencies are `completed`, in its worktree (ADR-0003), up to 3 at once. The limit is a fixed constant; a user setting needs its own decision (ADR-0016.D5 rule).
   - It moves the task `queued -> running` through the existing `session_task_transition`.
   - It creates the worktree, spawns the harness, and runs `initialize`, `session/new` with the absolute worktree path as `cwd` and `mcpServers: []`, then `session/prompt`.
-  - The prompt is the ADR-0007 handoff built from the plan task.
+  - The prompt is plain text built from the plan task: the title as the goal, the task's files if any (each as a path relative to the worktree), and the absolute worktree path. A section with no content is left out; the runner never writes placeholder text such as 'None'. The ADR-0007 renderer is not used, because it requires `non_goals`, `constraints` and `acceptance_commands` that a plan task does not carry; ADR-0007 is unchanged.
 - **Client.** ACP is spoken with the official `agent-client-protocol` crate, with tokio added to bridge `tokio::process` stdio. No hand-rolled JSON-RPC.
 - **Launch table.** The Capability Registry gains the launch command per harness from the table above. `omp` and `claude` and `codex` move to transport `Acp`. `pi` stays `NativeProcess` and is not runnable. After `initialize`, the registry records the `agentCapabilities` the agent actually returned. It does not guess features (ADR-0001.D1).
 - **Adapters.** Claude and Codex run through `npx`. They count as available only when `npx` resolves, and the UI says that an adapter downloads on first use.
@@ -88,7 +88,7 @@ D2: **Controls.** The agent detail controls become real where ACP supports them.
 - **Honest limit.** Agents write files themselves, so BentoBox cannot enforce ADR-0010's "sub-agent writes only inside its worktree". It sets `cwd` to the worktree and relies on the agent's own permission prompts. This is a gap against ADR-0010.D1's backend-enforced boundary and is stated in the UI help text.
 
 D3: **Events and refresh.** The runner appends events with kinds and payload keys that `src/features/agent-detail/timeline.ts` already reads:
-- `handoff` (the ADR-0007 payload), `tool_call` (`tool`, `target`, `output`), `permission_request` (`operation`, `target`, `request_id`), `file_changed` (`path`, `additions`, `deletions`, from the agent's diff updates when it sends them), `agent_message`, `agent_thought`, `agent_log` and `task_state`.
+ - `handoff` (goal = task title, files as `{path}`, `worktree_path`; sections with no content omitted), `tool_call` (`tool`, `target`, `output`), `permission_request` (`operation`, `target`, `request_id`), `file_changed` (`path`, `additions`, `deletions`, from the agent's diff updates when it sends them), `agent_message`, `agent_thought`, `agent_log` and `task_state`.
 - Every payload carries `plan_task_id` (string) and, once the worktree exists, `branch`.
 - `events.task_id` stays null. No `tasks` rows are created. The attribution rule from ADR-0016.D4 is the only link.
 - Agent token reports (ACP `usage_update`) are recorded through `usage::record` only when the agent reports them (ADR-0002.D1). Otherwise usage stays unavailable and the UI says so.
@@ -104,15 +104,17 @@ D4: **One-task plan from the composer.** ADR-0010's Consequences already say sma
 
 ## Consequences
 - **Dependencies.** `agent-client-protocol`, tokio (process, io-util, sync) and `tokio-util` compat. The crate needs Rust 1.88 or newer; the repo's toolchain must be checked before building.
-- **Handoff gap.** ADR-0007's renderer validates `goal`, `non_goals`, `constraints`, `acceptance_commands` and `files`. A `PlanTask` carries a title and optional files only. The first build step reads the validation. If empty lists are rejected, the one-task plan must supply fixed text, and any change to the ADR-0007 renderer needs its own decision.
+- **Prompt text.** The prompt is plain text built from the plan task; a one-task plan from the composer with no files sends the title and worktree path only; richer handoffs (non-goals, constraints, acceptance commands) need a decision that gives plan tasks those fields, and are out of scope here.
 - **Unverified.** Adapter behaviour for Claude and Codex on this machine, `omp acp` and `opencode acp` versions, and whether each agent sends diff updates for `file_changed`.
-- **Out of scope.** ACP orchestrator and plan generation, running acceptance commands, review completion, Pause, Take over, teams and fallback (ADR-0011), routing (ADR-0012), `session/load` resume, any user setting for concurrency.
+- **Out of scope.** ACP orchestrator and plan generation, running acceptance commands, review completion, Pause, Take over, teams and fallback (ADR-0011), routing (ADR-0012), `session/load` resume, any user setting for concurrency, richer handoffs (see Prompt text).
 - **Tests must prove:**
   - with a scripted fake ACP agent (a test binary speaking newline-delimited JSON), the handshake runs in order and the prompt reaches `end_turn`
   - the task moves `queued -> running -> review`, and the runner does not start a task before its dependencies are completed
   - a task never starts before approval
   - `cwd` is the absolute worktree path
   - a permission request is answered by Allow, and by Stop with `cancelled`
+  - the prompt text omits sections with no content and never contains the literal 'None'
+  - a task with no files still starts
   - Stop ends the process and sets `cancelled`
   - a killed or crashed agent sets `failed`, and startup marks orphaned `running` tasks `failed`
   - events carry `plan_task_id`, and `timeline.ts` attributes them to the right task
