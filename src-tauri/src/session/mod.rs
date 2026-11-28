@@ -12,6 +12,8 @@ pub struct PlanTask {
     pub team: String,
     pub harness: String,
     pub worktree: bool,
+    #[serde(default)]
+    pub files: Vec<String>,
     pub dependencies: Vec<String>,
     pub estimated_tokens: Option<u64>,
     pub status: String,

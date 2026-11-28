@@ -1,12 +1,13 @@
 import { geometry, regionWidths } from "./geometry";
 
 /** @adr ADR-0016.D2 */
-export function shortcut(event: Pick<KeyboardEvent, "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">, mac: boolean): "left" | "right" | "search" | "new-session" | null {
+export function shortcut(event: Pick<KeyboardEvent, "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">, mac: boolean): "left" | "right" | "search" | "new-session" | "settings" | null {
   if (!(mac ? event.metaKey : event.ctrlKey) || event.shiftKey) return null;
   if (event.code === "KeyB") return event.altKey ? "right" : "left";
   if (event.altKey) return null;
   if (event.code === "KeyK") return "search";
   if (event.code === "KeyN") return "new-session";
+  if (event.code === "Comma") return "settings";
   return null;
 }
 

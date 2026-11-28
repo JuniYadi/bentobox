@@ -24,3 +24,14 @@ describe("[ADR-0016.D2] shell keyboard controls", () => {
     expect(resizedFraction("left", "ArrowRight", false, 1024, null)).toBe(200 / 1024 + 0.01);
   });
 });
+
+describe("[ADR-0016.D5] settings keyboard control", () => {
+  test("opens settings with the platform modifier and no extra modifiers", () => {
+    const event = { code: "Comma", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false };
+    expect(shortcut(event, true)).toBe("settings");
+    expect(shortcut({ ...event, metaKey: false, ctrlKey: true }, false)).toBe("settings");
+    expect(shortcut({ ...event, metaKey: false }, true)).toBeNull();
+    expect(shortcut({ ...event, altKey: true }, true)).toBeNull();
+    expect(shortcut({ ...event, shiftKey: true }, true)).toBeNull();
+  });
+});

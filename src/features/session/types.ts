@@ -1,13 +1,17 @@
 /** @adr ADR-0010.D1 */
 export type SessionPhase = "Plan" | "Approve" | "Build" | "Review" | "Rejected" | "Closed" | "Cancelled";
 
-/** @adr ADR-0010.D1 */
+/**
+ * @adr ADR-0010.D1
+ * @adr ADR-0016.D3
+ */
 export interface PlanTask {
   id: string;
   title: string;
   team: string;
   harness: string;
   worktree: boolean;
+  files: string[];
   dependencies: string[];
   estimated_tokens: number | null;
   status: "queued" | "running" | "review" | "completed" | "failed" | "cancelled";
