@@ -1,6 +1,24 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import type { DetectedHarness } from "./api";
 
+const invoked: Array<{ cmd: string; args: unknown }> = [];
+
+mock.module("@tauri-apps/api/core", () => ({
+  invoke: (cmd: string, args?: unknown) => {
+    invoked.push({ cmd, args });
+    if (cmd === "agent_list_models") {
+      return Promise.resolve({
+        models: [{ id: "sonnet", name: "Sonnet" }],
+        currentModel: "sonnet",
+        status: "ready",
+        note: null,
+      });
+    }
+    return Promise.resolve();
+  },
+}));
+// Exception: dynamic import is required after mock.module to bind the mocked Tauri modules.
+const { agentListModels } = await import("./api");
 describe("[ADR-0001.D1] detected harness registry type", () => {
   test("DetectedHarness includes runnable and launch_note fields", () => {
     const harness: DetectedHarness = {
@@ -60,5 +78,17 @@ describe("[ADR-0001.D1] detected harness registry type", () => {
 
     expect(claude.runnable).toBe(false);
     expect(claude.launch_note).toBe("downloads the adapter with npx on first use");
+  });
+});
+
+describe("[ADR-0021.D1] agentListModels", () => {
+  test("invokes agent_list_models with harness and refresh", async () => {
+    const before = invoked.length;
+    const result = await agentListModels("omp", true);
+    expect(invoked.slice(before)).toEqual([
+      { cmd: "agent_list_models", args: { harness: "omp", refresh: true } },
+    ]);
+    expect(result.status).toBe("ready");
+    expect(result.models).toEqual([{ id: "sonnet", name: "Sonnet" }]);
   });
 });

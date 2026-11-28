@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BentoBox — Chat</title>
+<link rel="stylesheet" href="../tokens.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--color-bg); color: var(--color-fg); font-family: var(--font-sans); font-size: 14px; line-height: 1.5; height: 100vh; display: flex; flex-direction: column; overflow: hidden; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .muted { color: var(--color-fg-muted); }
+  .app { flex: 1; display: flex; min-height: 0; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500; white-space: nowrap; }
+  .btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
+  .btn-default { background: var(--color-accent); color: var(--color-accent-fg); }
+  .btn-outline { border: 1px solid var(--color-border); }
+  .sidebar { width: 256px; flex: none; background: var(--color-surface); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
+  .sb-header { padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 10px; }
+  .brand { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px; font-weight: 600; }
+  .logo { width: 24px; height: 24px; border-radius: var(--radius-md); background: var(--color-accent); color: var(--color-accent-fg); display: grid; place-items: center; }
+  .search { display: flex; align-items: center; height: 32px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-fg-muted); font-size: 13px; }
+  .sb-content { flex: 1; padding: 4px 8px 8px; }
+  .group-label { height: 32px; padding: 7px 8px; font-size: 12px; color: var(--color-fg-muted); }
+  .proj-btn, .item, .foot-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px; text-align: left; font-size: 13px; }
+  .sub { margin: 2px 0 6px 17px; padding-left: 8px; border-left: 1px solid var(--color-border); }
+  .item { height: 28px; border-radius: var(--radius-md); background: var(--color-surface-elevated); }
+  .sb-footer { padding: 8px; border-top: 1px solid var(--color-border); color: var(--color-fg-muted); }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar { height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--color-border); }
+  .phases { margin-left: auto; display: flex; align-items: center; }
+  .ph { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 9999px; color: var(--color-fg-muted); font-size: 12px; }
+  .ph.active { background: var(--color-surface-elevated); color: var(--color-fg); }
+  .ph i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-fg-muted); }
+  .ph.active i { background: var(--color-success); }
+  .sep { width: 12px; height: 1px; background: var(--color-border); }
+  .chat { flex: 1; overflow-y: auto; }
+  .chat-inner { max-width: 720px; margin: 0 auto; padding: 32px 24px; display: flex; flex-direction: column; gap: 20px; }
+  .user { align-self: flex-end; max-width: 80%; background: var(--color-surface-elevated); padding: 8px 12px; border-radius: var(--radius-lg); font-size: 14px; }
+  .assistant { font-size: 14px; color: var(--color-fg); }
+  .card { border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); padding: 12px; font-size: 14px; }
+  .card summary { cursor: pointer; }
+  .permission { border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border)); }
+  .permission-label { color: var(--color-warning); font-size: 11px; font-weight: 500; margin-bottom: 8px; }
+  .actions { display: flex; gap: 8px; padding-top: 8px; }
+  .composer-wrap { max-width: 720px; width: 100%; margin: 0 auto; padding: 0 24px 20px; }
+  .composer { border: 1px solid var(--color-input); border-radius: var(--radius-lg); background: var(--color-bg); }
+  .composer textarea { display: block; width: 100%; min-height: 64px; resize: none; border: 0; outline: 0; background: none; color: var(--color-fg); font: inherit; padding: 12px; }
+  .toolbar { display: flex; align-items: center; gap: 12px; padding: 8px; }
+  .picker-btn { height: 28px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .hx { width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--color-surface-elevated); display: grid; place-items: center; font-size: 9px; font-weight: 700; flex: none; }
+  .picker { position: relative; }
+  .menu { position: absolute; bottom: 34px; left: 0; width: 280px; padding: 4px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 10; }
+  .menu-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-fg-muted); padding: 6px 8px 4px; }
+  .menu-item { width: 100%; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--radius-sm); font-size: 12px; text-align: left; }
+  .menu-item:hover { background: var(--color-surface-elevated); }
+  .menu-item .m { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-muted); }
+  .menu-item.off { color: var(--color-fg-muted); }
+  .menu-sep { height: 1px; background: var(--color-border); margin: 4px 0; }
+  .status-row { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); padding: 8px 12px; font-size: 14px; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-fg-muted); }
+  .track { width: 32px; height: 18px; border-radius: 9999px; background: var(--color-input); position: relative; }
+  .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--color-fg); }
+  .toolbar .send { margin-left: auto; width: 32px; padding: 0; }
+  .panel { width: 280px; flex: none; border-left: 1px solid var(--color-border); color: var(--color-fg-muted); }
+  .ptabs { height: 48px; padding: 14px 16px; border-bottom: 1px solid var(--color-border); font-size: 12px; }
+  .statusbar { height: 28px; display: flex; align-items: center; gap: 16px; padding: 0 12px; border-top: 1px solid var(--color-border); font-size: 11px; color: var(--color-fg-muted); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar"><div class="sb-header"><div class="brand"><span class="logo">▦</span>bentobox</div><div class="search">Search sessions ⌘K</div></div><div class="sb-content"><div class="group-label">Projects</div><div class="proj-btn">⌄ &nbsp; BentoBox</div><div class="sub"><button class="item">Chat session</button></div></div><div class="sb-footer"><button class="foot-item">Settings</button><button class="foot-item">Collapse sidebar</button></div></aside>
+  <main class="main">
+    <header class="topbar"><span class="muted">BentoBox</span><span class="muted">›</span><span>Chat session</span><div class="phases" aria-label="Plan phases"><span class="ph"><i></i>Plan</span><span class="sep"></span><span class="ph"><i></i>Approve</span><span class="sep"></span><span class="ph active"><i></i>Build</span><span class="sep"></span><span class="ph"><i></i>Review</span></div></header>
+    <section class="chat"><div class="chat-inner">
+      <div class="user">Summarize the change.</div>
+      <div class="assistant">The chat now shows the conversation and groups tool activity.</div>
+      <div class="status-row"><span class="muted">Agent working…</span><div class="actions" style="padding-top:0;"><button class="btn btn-outline btn-sm">Open agent</button><button class="btn btn-outline btn-sm">Stop</button></div></div>
+      <details class="card"><summary>Activity (3)</summary><p class="muted">Read files · Updated chat · Checked changes</p></details>
+      <div class="card permission"><div class="permission-label">PERMISSION REQUIRED</div><div>Write src/App.tsx</div><div class="actions"><button class="btn btn-outline btn-sm">Deny</button><button class="btn btn-default btn-sm">Allow</button><button class="btn btn-outline btn-sm">Always allow</button></div></div>
+    </div></section>
+    <div class="composer-wrap"><form class="composer"><textarea aria-label="Prompt" placeholder="Describe the goal…"></textarea><div class="toolbar"><button type="button" class="picker-btn">Mode: Auto ⌄</button><div class="picker"><button type="button" class="picker-btn"><span class="hx">Cl</span><span>Claude Code · Default model ⌄</span></button><div class="menu"><div class="menu-label">Harness</div><button class="menu-item"><span class="hx">Cl</span> Claude Code <span class="m">✓</span></button><button class="menu-item"><span class="hx">Cx</span> OpenAI Codex</button><button class="menu-item"><span class="hx">om</span> Oh My Pi</button><button class="menu-item off" disabled><span class="hx">pi</span> pi (CLI) <span class="m">offline</span></button><div class="menu-sep"></div><div class="menu-label">Model</div><button class="menu-item">Default model <span class="m">✓</span></button><button class="menu-item">Claude 3.5 Sonnet <span class="m">EXAMPLE</span></button><button class="menu-item">Claude 3.5 Haiku <span class="m">EXAMPLE</span></button></div></div><label class="switch"><span class="track"></span>Concise</label><label class="switch"><span class="track"></span>Worktree</label><button type="submit" class="btn btn-default send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div></form></div>
+  </main>
+  <aside class="panel"><div class="ptabs">Context</div></aside>
+</div>
+<footer class="statusbar"><span>● Claude</span><span>● Codex</span><span>● omp</span></footer>
+</body>
+</html>

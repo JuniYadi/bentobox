@@ -39,3 +39,19 @@ export interface DetectedHarness {
 export function listDetectedHarnesses(): Promise<DetectedHarness[]> {
   return invoke<DetectedHarness[]>("list_detected_harnesses");
 }
+
+/** @adr ADR-0021.D1 */
+export interface ModelOption { id: string; name: string }
+
+/** @adr ADR-0021.D1 */
+export interface ModelCatalog {
+  models: ModelOption[];
+  currentModel: string | null;
+  status: "ready" | "unadvertised" | "auth_required" | "unavailable" | "timeout";
+  note: string | null;
+}
+
+/** @adr ADR-0021.D1 */
+export function agentListModels(harness: string, refresh?: boolean): Promise<ModelCatalog> {
+  return invoke("agent_list_models", { harness, refresh });
+}

@@ -13,13 +13,13 @@ import { ProjectTree } from "./components/layout/ProjectTree";
 import { RightPanel } from "./components/layout/RightPanel";
 import { StatusBar } from "./components/layout/StatusBar";
 import { addProjectFromPicker, projectTree, projectUnassignedSessions, type Project, type ProjectSession } from "./features/project/api";
-import { approvePlan, createSession, getPlan, listSessions, sessionSetConcise, setSessionWorktree, startDirectRun } from "./features/session/api";
+import { approvePlan, createSession, getPlan, listSessions, sessionSetConcise, sessionSetModel, setSessionWorktree, startDirectRun } from "./features/session/api";
 import { PLAN_COMPOSER_PLACEHOLDER, PlanCard, showsPlanCard } from "./features/session/PlanCard";
-import { buildOneTaskPlan, getComposerHarnessOptions, phaseStepState, sendState, toggleSessionConcise } from "./features/session/composer";
+import { buildOneTaskPlan, getComposerHarnessOptions, getModelDisplayName, harnessMonogram, modelPickerState, phaseStepState, sendState, toggleSessionConcise } from "./features/session/composer";
 import { AgentDetailView, AgentRightPanel, SubAgentCard } from "./features/agent-detail";
 import { fetchIncrementalEvents, loadSessionEvents, mergeEvents, partitionChatTimeline } from "./features/agent-detail/timeline";
-import { listDetectedHarnesses, type DetectedHarness } from "./features/agent/api";
-import { onRunnerEvent, onSessionTitle, runnerRespondPermission, runnerSend, runnerSetMode, runnerStart, runnerStop } from "./features/runner/api";
+import { agentListModels, listDetectedHarnesses, type DetectedHarness, type ModelCatalog, type ModelOption } from "./features/agent/api";
+import { onRunnerEvent, onSessionTitle, runnerRespondPermission, runnerSend, runnerSetMode, runnerSetModel, runnerStart, runnerStop } from "./features/runner/api";
 import type { DbEvent, JsonValue } from "../src-tauri/src/db/api";
 import { SettingsView } from "./features/settings/SettingsView";
 import type { Plan, Session } from "./features/session/types";
@@ -77,6 +77,7 @@ export default function App() {
   const sendingRef = useRef(false);
   const [detectedHarnesses, setDetectedHarnesses] = useState<DetectedHarness[]>([]);
   const [selectedHarness, setSelectedHarness] = useState<string | null>(null);
+  const [modelCatalogs, setModelCatalogs] = useState<Record<string, ModelCatalog | "loading" | "error">>({});
   const planGeneration = useRef(0);
   const titleUpdates = useRef<{ sequence: number; titles: Map<number, { sequence: number; title: string }> }>({ sequence: 0, titles: new Map() });
   const eventsRef = useRef(events);
@@ -140,6 +141,21 @@ export default function App() {
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
+  const fetchCatalog = useCallback(async (harnessId: string, refresh = false) => {
+    setModelCatalogs((prev) => ({ ...prev, [harnessId]: "loading" }));
+    try {
+      const catalog = await agentListModels(harnessId, refresh);
+      setModelCatalogs((prev) => ({ ...prev, [harnessId]: catalog }));
+    } catch {
+      setModelCatalogs((prev) => ({ ...prev, [harnessId]: "error" }));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedHarness && !modelCatalogs[selectedHarness]) {
+      void fetchCatalog(selectedHarness);
+    }
+  }, [selectedHarness, modelCatalogs, fetchCatalog]);
 
   useEffect(() => {
     const generation = ++planGeneration.current;
@@ -353,6 +369,46 @@ export default function App() {
     catch (reason) { setError(`Could not stop task: ${String(reason)}`); }
     finally { setStoppingTaskId(null); }
   }
+  async function handleSelectHarness(harnessId: string) {
+    setSelectedHarness(harnessId);
+    if (activeSession && activeSession.model !== null) {
+      const prevModel = activeSession.model;
+      setConversation((current) => ({
+        ...current,
+        sessions: current.sessions.map((s) => s.id === activeSession.id ? { ...s, model: null } : s),
+      }));
+      try {
+        await sessionSetModel(activeSession.id, null);
+      } catch (reason) {
+        setConversation((current) => ({
+          ...current,
+          sessions: current.sessions.map((s) => s.id === activeSession.id ? { ...s, model: prevModel } : s),
+        }));
+        setError(`Could not clear session model: ${String(reason)}`);
+      }
+    }
+  }
+  async function handleSelectModel(modelId: string | null) {
+    if (!activeSession) return;
+    const prevModel = activeSession.model;
+    setConversation((current) => ({
+      ...current,
+      sessions: current.sessions.map((s) => s.id === activeSession.id ? { ...s, model: modelId } : s),
+    }));
+    try {
+      await sessionSetModel(activeSession.id, modelId);
+      const currentTask = activePlan?.tasks.length === 1 ? activePlan.tasks[0] : null;
+      if (currentTask && (currentTask.status === "running" || currentTask.status === "review") && modelId !== null) {
+        await runnerSetModel(activeSession.id, currentTask.id, modelId);
+      }
+    } catch (reason) {
+      setConversation((current) => ({
+        ...current,
+        sessions: current.sessions.map((s) => s.id === activeSession.id ? { ...s, model: prevModel } : s),
+      }));
+      setError(`Could not set model: ${String(reason)}`);
+    }
+  }
   async function handleSend() {
     if (!activeSession || !selectedHarness || !prompt.trim() || sendingRef.current) return;
     const state = sendState({ text: prompt, harness: selectedHarness, plan: activePlan });
@@ -365,7 +421,7 @@ export default function App() {
         await runnerSend(activeSession.id, task.id, prompt.trim());
       } else {
         const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        const tasks = buildOneTaskPlan(prompt, selectedHarness, activeProject?.isGit !== false && activeSession.optInWorktree, suffix);
+        const tasks = buildOneTaskPlan(prompt, selectedHarness, activeProject?.isGit !== false && activeSession.optInWorktree, suffix, activeSession.model);
         await startDirectRun(activeSession.id, tasks);
         const updated = await getPlan(activeSession.id);
         if (planGeneration.current === generation) setPlan(updated);
@@ -393,7 +449,7 @@ export default function App() {
             <SidebarFooter className="border-t p-2">{!leftCollapsed && <Button variant="ghost" className="justify-start" onClick={() => setView({ kind: "settings" })}><Settings2 /><span>Settings ⌘,</span></Button>}<Button variant="ghost" className="justify-start" onClick={() => { const value = !leftCollapsed; setLeftCollapsed(value); localStorage.setItem(storage.leftCollapsed, String(value)); }}><PanelRight />{!leftCollapsed && <span>Collapse ⌘B</span>}</Button></SidebarFooter>
           </Sidebar>
           {!leftCollapsed && <div role="separator" aria-label="Resize project sidebar" aria-orientation="vertical" aria-valuenow={Math.round(widths.left / windowWidth * 100)} aria-valuemin={Math.round(geometry.left.min / windowWidth * 100)} aria-valuemax={Math.round(geometry.left.max / windowWidth * 100)} tabIndex={0} className="w-1 shrink-0 cursor-col-resize hover:bg-ring focus-visible:bg-ring" onDoubleClick={() => { localStorage.removeItem(storage.left); setLeftFraction(null); }} onKeyDown={(event) => resizeKey(event, "left", leftFraction)} onPointerDown={(event) => beginResize(event, "left")} />}
-          <main data-region="content" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">{view.kind === "settings" ? <SettingsView onClose={() => setView({ kind: "main" })} /> : view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentDetailView session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} onBack={() => setView({ kind: "main" })} /> : <><TopBar session={activeSession} plan={activePlan} project={activeProject} collapsed={effectiveRightCollapsed} onToggle={() => { const next = !rightCollapsed; setRightCollapsed(next); localStorage.setItem(storage.rightCollapsed, String(next)); }} /><Chat session={activeSession} plan={activePlan} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} scrollRef={chatScrollRef} nonGit={activeProject?.isGit === false} busy={approvingSessionId === activeSessionId && activeSessionId !== null} stoppingTaskId={stoppingTaskId} onStop={(taskId) => void stopChatTask(taskId)} onApprove={(revision) => void approveCurrentPlan(revision)} onOpenAgent={(taskId) => setView({ kind: "agent", taskId })} prompt={prompt} onPromptChange={setPrompt} onToggleWorktree={toggleWorktree} onToggleConcise={toggleConcise} onCreateSession={() => { const project = activeProject ?? projects[0]; if (project) void createNewSession(project); }} error={error} loading={loading} harnesses={detectedHarnesses} selectedHarness={selectedHarness} onSelectHarness={setSelectedHarness} onSend={() => void handleSend()} onPermission={(taskId, requestId, decision) => { if (activeSession) void runnerRespondPermission(activeSession.id, taskId, requestId, decision).catch((reason) => setError(`Could not respond to permission: ${String(reason)}`)); }} onMode={(taskId, modeId) => { if (activeSession) void runnerSetMode(activeSession.id, taskId, modeId).catch((reason) => setError(`Could not change mode: ${String(reason)}`)); }} /></>}</main>
+          <main data-region="content" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">{view.kind === "settings" ? <SettingsView onClose={() => setView({ kind: "main" })} /> : view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentDetailView session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} onBack={() => setView({ kind: "main" })} /> : <><TopBar session={activeSession} plan={activePlan} project={activeProject} collapsed={effectiveRightCollapsed} onToggle={() => { const next = !rightCollapsed; setRightCollapsed(next); localStorage.setItem(storage.rightCollapsed, String(next)); }} /><Chat session={activeSession} plan={activePlan} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} scrollRef={chatScrollRef} nonGit={activeProject?.isGit === false} busy={approvingSessionId === activeSessionId && activeSessionId !== null} stoppingTaskId={stoppingTaskId} onStop={(taskId) => void stopChatTask(taskId)} onApprove={(revision) => void approveCurrentPlan(revision)} onOpenAgent={(taskId) => setView({ kind: "agent", taskId })} prompt={prompt} onPromptChange={setPrompt} onToggleWorktree={toggleWorktree} onToggleConcise={toggleConcise} onCreateSession={() => { const project = activeProject ?? projects[0]; if (project) void createNewSession(project); }} error={error} loading={loading} harnesses={detectedHarnesses} selectedHarness={selectedHarness} onSelectHarness={(harnessId) => void handleSelectHarness(harnessId)} onSelectModel={(modelId) => void handleSelectModel(modelId)} modelCatalog={selectedHarness ? modelCatalogs[selectedHarness] : undefined} onRetryModels={() => { if (selectedHarness) void fetchCatalog(selectedHarness, true); }} onOpenModelMenu={() => { if (selectedHarness && !modelCatalogs[selectedHarness]) void fetchCatalog(selectedHarness); }} onSend={() => void handleSend()} onPermission={(taskId, requestId, decision) => { if (activeSession) void runnerRespondPermission(activeSession.id, taskId, requestId, decision).catch((reason) => setError(`Could not respond to permission: ${String(reason)}`)); }} onMode={(taskId, modeId) => { if (activeSession) void runnerSetMode(activeSession.id, taskId, modeId).catch((reason) => setError(`Could not change mode: ${String(reason)}`)); }} /></>}</main>
           {view.kind !== "settings" && !effectiveRightCollapsed && <><div role="separator" aria-label="Resize contextual panel" aria-orientation="vertical" aria-valuenow={Math.round(widths.right / windowWidth * 100)} aria-valuemin={Math.round(geometry.right.min / windowWidth * 100)} aria-valuemax={Math.round(geometry.right.max / windowWidth * 100)} tabIndex={0} className="w-1 shrink-0 cursor-col-resize hover:bg-ring focus-visible:bg-ring" onDoubleClick={() => { localStorage.removeItem(storage.right); setRightFraction(null); }} onKeyDown={(event) => resizeKey(event, "right", rightFraction)} onPointerDown={(event) => beginResize(event, "right")} />
           <div data-region="right" className="h-full min-h-0 shrink-0 overflow-hidden w-(--right-width)" style={{ "--right-width": regionWidthCss("right", rightFraction) } as React.CSSProperties}>{view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentRightPanel session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} /> : <RightPanel onUseAsPrompt={setPrompt} />}</div></>}
         </SidebarProvider>
@@ -487,6 +543,10 @@ export interface ChatProps {
   harnesses?: DetectedHarness[];
   selectedHarness?: string | null;
   onSelectHarness?: (harnessId: string) => void;
+  onSelectModel?: (modelId: string | null) => void;
+  modelCatalog?: ModelCatalog | "loading" | "error";
+  onRetryModels?: () => void;
+  onOpenModelMenu?: () => void;
   onSend?: () => void;
   events?: DbEvent[] | null;
   eventsError?: string | null;
@@ -516,6 +576,10 @@ export function Chat({
   harnesses = [],
   selectedHarness = null,
   onSelectHarness,
+  onSelectModel,
+  modelCatalog,
+  onRetryModels,
+  onOpenModelMenu,
   onSend,
   events = null,
   eventsError,
@@ -529,6 +593,7 @@ export function Chat({
 }: ChatProps) {
   const harnessOptions = getComposerHarnessOptions(harnesses);
   const chosenOption = harnessOptions.find((opt) => opt.harnessId === selectedHarness);
+
   const currentSendState = sendState({
     text: prompt,
     harness: selectedHarness,
@@ -536,21 +601,36 @@ export function Chat({
   });
   const sendDisabled = !currentSendState.enabled || !session;
   const tasks = plan?.tasks ?? [];
-  const parts = tasks.map((task) => ({ task, ...partitionChatTimeline(events ?? [], task) }));
-  const chatItems = parts.flatMap(({ task, chatItems }) => chatItems.map((event) => ({ task, event }))).sort((a, b) => a.event.id - b.event.id);
+  const parts = tasks.map((t) => ({ task: t, ...partitionChatTimeline(events ?? [], t) }));
+  const chatItems = parts.flatMap(({ task: t, chatItems: items }) => items.map((event) => ({ task: t, event }))).sort((a, b) => a.event.id - b.event.id);
   const chatIds = new Set(chatItems.map(({ event }) => event.id));
   const activityItems = (events ?? []).filter((event) => !chatIds.has(event.id));
   const task = tasks.length === 1 ? tasks[0] : null;
   let modes: { id: string; name: string }[] = [];
   let currentMode: string | null = null;
+  let liveModels: ModelOption[] = [];
+  let liveModelId: string | null = null;
   for (const event of events ?? []) {
     const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {};
     if (!task || payload.plan_task_id !== task.id) continue;
     if (event.kind === "session_modes" && Array.isArray(payload.available)) {
       modes = payload.available.flatMap((mode) => mode && typeof mode === "object" && !Array.isArray(mode) && typeof mode.id === "string" && typeof mode.name === "string" ? [{ id: mode.id, name: mode.name }] : []);
       currentMode = typeof payload.current === "string" ? payload.current : null;
-    } else if (event.kind === "session_mode_changed") currentMode = typeof payload.current === "string" ? payload.current : null;
+    } else if (event.kind === "session_mode_changed") {
+      currentMode = typeof payload.current === "string" ? payload.current : null;
+    } else if (event.kind === "session_models" && Array.isArray(payload.available)) {
+      liveModels = payload.available.flatMap((m) => m && typeof m === "object" && !Array.isArray(m) && typeof m.id === "string" && typeof m.name === "string" ? [{ id: m.id, name: m.name }] : []);
+      liveModelId = typeof payload.current === "string" ? payload.current : null;
+    } else if (event.kind === "session_model_changed") {
+      liveModelId = typeof payload.current === "string" ? payload.current : null;
+    }
   }
+
+  const pickerState = modelPickerState(modelCatalog);
+  const isRunActive = Boolean(task && (task.status === "running" || task.status === "review"));
+  const activeModelId = isRunActive && liveModelId !== null ? liveModelId : (session?.model ?? null);
+  const availableModels = isRunActive && liveModels.length > 0 ? liveModels : pickerState.models;
+  const displayModelName = getModelDisplayName(activeModelId, availableModels);
 
   return <>
     <section ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
@@ -559,8 +639,34 @@ export function Chat({
         {!session ? <div className="flex flex-col items-center gap-3 py-20 text-center text-sm text-muted-foreground">{loading ? "Loading sessions…" : "No session selected. Choose a project to create a session."}<Button variant="outline" onClick={onCreateSession} disabled={!session && loading}>New session</Button></div> : <>
           {showsPlanCard(plan) && plan && <PlanCard plan={plan} busy={busy} onApprove={onApprove} />}
           {plan?.tasks_started && tasks.length > 1 && tasks.map((item) => <SubAgentCard key={item.id} task={item} onOpen={() => onOpenAgent(item.id)} />)}
-          {task && plan?.tasks_started && <Button type="button" variant="outline" onClick={() => onOpenAgent(task.id)}>Open agent</Button>}
-          {task && (task.status === "running" || task.status === "review") && <Button type="button" variant="outline" disabled={stoppingTaskId === task.id} onClick={() => onStop?.(task.id)}>{stoppingTaskId === task.id ? "Stopping…" : "Stop"}</Button>}
+          {task && plan?.tasks_started && (
+            <div className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2 text-sm">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                {task.status === "running" ? (
+                  <span role="status">Agent working…</span>
+                ) : (
+                  <span className="capitalize">{task.status}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => onOpenAgent(task.id)}>
+                  Open agent
+                </Button>
+                {(task.status === "running" || task.status === "review") && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    disabled={stoppingTaskId === task.id}
+                    onClick={() => onStop?.(task.id)}
+                  >
+                    {stoppingTaskId === task.id ? "Stopping…" : "Stop"}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
           {eventsError && <p role="alert">{eventsError}</p>}
           {eventsTruncated && <p role="status">Showing the first 5,000 events</p>}
           {chatItems.map(({ task: itemTask, event }) => {
@@ -594,7 +700,9 @@ export function Chat({
               </div>
             );
           })}
-          {tasks.some((item) => item.status === "running") && <p role="status" className="text-sm text-muted-foreground">Agent working…</p>}
+          {tasks.length > 1 && tasks.some((item) => item.status === "running") && (
+            <p role="status" className="text-sm text-muted-foreground">Agent working…</p>
+          )}
           {activityItems.length > 0 && <details className="rounded-lg border border-border bg-card p-3 text-sm"><summary className="cursor-pointer">Activity ({activityItems.length})</summary><ul className="mt-2 space-y-1 text-xs text-muted-foreground">{activityItems.map((event) => { const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {}; const detail = [payload.tool, payload.target, payload.text, payload.status].find((value) => typeof value === "string"); return <li key={event.id} className="truncate">{event.kind}{typeof detail === "string" ? `: ${detail}` : ""}</li>; })}</ul></details>}
         </>}
       </div>
@@ -603,19 +711,64 @@ export function Chat({
       <form onSubmit={(event) => { event.preventDefault(); if (!sendDisabled && onSend) onSend(); }} className="rounded-lg border border-input bg-background focus-within:ring-1 focus-within:ring-ring">
         <Textarea aria-label="Prompt" value={prompt} onChange={(event) => onPromptChange(event.target.value)} placeholder={showsPlanCard(plan) ? PLAN_COMPOSER_PLACEHOLDER : "Describe the goal…"} className="min-h-16 resize-none border-0 shadow-none focus-visible:ring-0" />
         {currentSendState.reason && (
-          <p id="send-disabled-reason" className="px-3 text-xs text-muted-foreground">{currentSendState.reason}</p>
+          <p
+            id="send-disabled-reason"
+            className={currentSendState.reason === "Describe a goal for the agent." ? "sr-only" : "px-3 text-xs text-muted-foreground"}
+          >
+            {currentSendState.reason}
+          </p>
         )}
         <div className="flex items-center gap-3 p-2">
-          <DropdownMenu>
+          {task && modes.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs">
+                  <span>{`Mode: ${modes.find((m) => m.id === currentMode)?.name ?? currentMode ?? "Select mode"}`}</span>
+                  <ChevronDown className="ml-1 size-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-48 p-1">
+                {modes.map((mode) => (
+                  <DropdownMenuItem
+                    key={mode.id}
+                    onClick={() => onMode?.(task.id, mode.id)}
+                    className="flex items-center justify-between p-2 text-xs cursor-pointer"
+                  >
+                    <span>{mode.name}</span>
+                    {mode.id === currentMode && <span className="text-xs text-primary">✓</span>}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          <DropdownMenu
+            onOpenChange={(open) => {
+              if (open && onOpenModelMenu) {
+                onOpenModelMenu();
+              }
+            }}
+          >
             <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" className="text-xs">
-                <span>{chosenOption ? chosenOption.displayName : "Select harness"}</span>
+              <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs">
+                {chosenOption ? (
+                  <>
+                    <span className="inline-flex size-4 items-center justify-center rounded bg-surface-elevated text-[9px] font-bold text-foreground">
+                      {harnessMonogram(chosenOption.harnessId)}
+                    </span>
+                    <span>{chosenOption.displayName} · {displayModelName}</span>
+                  </>
+                ) : (
+                  <span>Select harness</span>
+                )}
                 <ChevronDown className="ml-1 size-3.5" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-64 p-1">
+            <DropdownMenuContent align="start" className="w-72 p-1">
+              <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Harness
+              </div>
               {harnessOptions.length === 0 ? (
-                <div className="p-2 text-xs text-muted-foreground">No ACP harnesses detected</div>
+                <div className="p-2 text-xs text-muted-foreground">No harnesses detected</div>
               ) : (
                 harnessOptions.map((opt) => (
                   <DropdownMenuItem
@@ -627,7 +780,12 @@ export function Chat({
                     className="flex flex-col items-start gap-0.5 p-2 text-xs cursor-pointer"
                   >
                     <div className="flex w-full items-center justify-between font-medium">
-                      <span>{opt.displayName}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex size-4 items-center justify-center rounded bg-surface-elevated text-[9px] font-bold text-foreground">
+                          {harnessMonogram(opt.harnessId)}
+                        </span>
+                        <span>{opt.displayName}</span>
+                      </div>
                       {opt.harnessId === selectedHarness && <span className="text-xs text-primary">✓</span>}
                     </div>
                     {opt.launchNote && (
@@ -639,9 +797,70 @@ export function Chat({
                   </DropdownMenuItem>
                 ))
               )}
+              <div className="my-1 h-px bg-border" />
+              <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Model
+              </div>
+              {!chosenOption ? (
+                <div className="p-2 text-xs text-muted-foreground">Select a harness to view models</div>
+              ) : !chosenOption.runnable ? (
+                <div className="p-2 text-xs text-muted-foreground">{chosenOption.disabledReason || "Harness offline"}</div>
+              ) : pickerState.status === "loading" ? (
+                <div className="flex flex-col gap-1 p-2 text-xs text-muted-foreground">
+                  <span>Loading models…</span>
+                  {chosenOption.launchNote && (
+                    <span className="text-[11px]">{chosenOption.launchNote}</span>
+                  )}
+                </div>
+              ) : pickerState.status === "auth_required" ? (
+                <div className="flex flex-col gap-1 p-2 text-xs text-muted-foreground">
+                  <span>Sign in to list models</span>
+                  {pickerState.note && <span className="text-[11px]">{pickerState.note}</span>}
+                </div>
+              ) : pickerState.status === "unadvertised" ? (
+                <div className="flex flex-col gap-1 p-2 text-xs text-muted-foreground">
+                  <span>Model selection not advertised by this agent</span>
+                  {pickerState.note && <span className="text-[11px]">{pickerState.note}</span>}
+                </div>
+              ) : pickerState.status === "timeout" || pickerState.status === "unavailable" || pickerState.status === "error" ? (
+                <div className="flex flex-col gap-1.5 p-2">
+                  <span className="text-xs text-muted-foreground">Could not load models</span>
+                  {pickerState.note && <span className="text-[11px] text-muted-foreground">{pickerState.note}</span>}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 w-fit px-2 text-xs"
+                    onClick={() => {
+                      if (onRetryModels) onRetryModels();
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <DropdownMenuItem
+                    onClick={() => onSelectModel?.(null)}
+                    className="flex w-full items-center justify-between p-2 text-xs cursor-pointer"
+                  >
+                    <span>Default model</span>
+                    {activeModelId === null && <span className="text-xs text-primary">✓</span>}
+                  </DropdownMenuItem>
+                  {pickerState.models.map((model) => (
+                    <DropdownMenuItem
+                      key={model.id}
+                      onClick={() => onSelectModel?.(model.id)}
+                      className="flex w-full items-center justify-between p-2 text-xs cursor-pointer"
+                    >
+                      <span>{model.name}</span>
+                      {activeModelId === model.id && <span className="text-xs text-primary">✓</span>}
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
-          {task && modes.length > 0 && <label className="text-xs">Mode <select aria-label="Mode" value={currentMode ?? ""} onChange={(event) => onMode?.(task.id, event.target.value)} className="rounded border bg-background p-1">{currentMode === null && <option value="" disabled>Select mode</option>}{modes.map((mode) => <option key={mode.id} value={mode.id}>{mode.name}</option>)}</select></label>}
           <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={session?.conciseReplies ?? false} onCheckedChange={onToggleConcise} disabled={!session} />Concise</label>
           <label title={nonGit ? "Not a git repository: worktree isolation is unavailable" : undefined} className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={!nonGit && (session?.optInWorktree ?? false)} onCheckedChange={onToggleWorktree} disabled={!session || nonGit} />Worktree{nonGit && <span>Not a git repository: worktree isolation is unavailable</span>}</label>
           <Button type="submit" size="icon-sm" disabled={sendDisabled} aria-label="Send" aria-describedby={currentSendState.reason ? "send-disabled-reason" : undefined} className="ml-auto"><ArrowUp className="size-4" /></Button>

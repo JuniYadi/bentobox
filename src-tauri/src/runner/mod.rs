@@ -1,6 +1,8 @@
 // @adr ADR-0017.D1
 // @adr ADR-0020.D1
 // @adr ADR-0020.D2
+// @adr ADR-0021.D1
+// @adr ADR-0021.D2
 mod events;
 
 use crate::{agent, db::Store, session::{self, Plan, PlanTask}, workspace};
@@ -11,10 +13,11 @@ use agent_client_protocol::v1::{
         CancelNotification, ClientCapabilities, ContentBlock, Implementation, InitializeRequest,
         NewSessionRequest, PermissionOptionId, PermissionOptionKind, PromptRequest,
         RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-        SelectedPermissionOutcome, SessionConfigKind, SessionConfigOptionCategory,
-        SessionConfigSelectOption, SessionConfigSelectOptions, SessionConfigOptionValue,
-        SessionId, SessionMode, SessionModeId, SessionNotification,
-        SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, TextContent,
+        SelectedPermissionOutcome, SessionConfigId, SessionConfigKind, SessionConfigOption,
+        SessionConfigOptionCategory, SessionConfigOptionValue, SessionConfigSelectOption,
+        SessionConfigSelectOptions, SessionConfigValueId, SessionId, SessionMode, SessionModeId,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
+        TextContent,
     },
 };
 use events::{Emit, EventWriter};
@@ -59,6 +62,9 @@ struct ActiveSession {
     connection: ConnectionTo<Agent>,
     available_modes: Vec<SessionMode>,
     current_mode: Option<String>,
+    model_config_id: Option<SessionConfigId>,
+    available_models: Vec<crate::agent::ModelOption>,
+    current_model: Option<String>,
 }
 
 struct TaskControl {
@@ -321,6 +327,48 @@ impl Runner {
         Ok(())
     }
 
+    /// @adr ADR-0021.D2
+    async fn set_model(&self, session_id: i64, task_id: &str, model_id: &str) -> Result<(), String> {
+        let control = self.control(session_id, task_id)?;
+        let (connection, acp_session_id, config_id) = {
+            let active = control.active_session.lock().map_err(|_| "active session lock poisoned")?;
+            let active = active.as_ref().ok_or("task has no active session")?;
+            let cfg_id = active.model_config_id.clone().ok_or("session has no advertised model option")?;
+            if !active.available_models.iter().any(|m| m.id == model_id) {
+                return Err("model is not in advertised models".into());
+            }
+            (active.connection.clone(), active.session_id.clone(), cfg_id)
+        };
+        let resp = connection.send_request(SetSessionConfigOptionRequest::new(
+            acp_session_id,
+            config_id,
+            SessionConfigOptionValue::from(SessionConfigValueId::new(model_id)),
+        )).block_task().await.map_err(|e| e.to_string())?;
+        self.store.set_session_model(session_id, Some(model_id))?;
+        let (previous, current_from_resp) = {
+            let mut active = control.active_session.lock().map_err(|_| "active session lock poisoned")?;
+            let prev = active.as_ref().and_then(|a| a.current_model.clone());
+            let current = if let Some((new_id, new_models, current_val)) = find_model_config(&resp.config_options) {
+                if let Some(active) = active.as_mut() {
+                    active.model_config_id = Some(new_id);
+                    active.available_models = new_models;
+                    if let Some(curr) = current_val.clone() {
+                        active.current_model = Some(curr);
+                    }
+                }
+                current_val
+            } else {
+                None
+            };
+            (prev, current)
+        };
+        let final_model = current_from_resp.unwrap_or_else(|| model_id.to_string());
+        if previous.as_deref() != Some(&final_model) {
+            control.events.lock().map_err(|_| "event lock poisoned")?.append("session_model_changed", json!({"current": final_model}))?;
+        }
+        Ok(())
+    }
+
     /// @adr ADR-0017.D1
     pub fn shutdown(&self) {
         let tasks: Vec<_> = match self.registry.lock() {
@@ -415,7 +463,41 @@ impl Runner {
         let event_worker = tauri::async_runtime::spawn(async move {
             while let Some(message) = receiver.recv().await {
                 match message {
-                    Incoming::Update(notification) => worker_control.events.lock().map_err(|_| "event lock poisoned")?.update(notification.update)?,
+                    Incoming::Update(notification) => {
+                        if let agent_client_protocol::v1::schema::SessionUpdate::ConfigOptionUpdate(cfg_update) = &notification.update {
+                            let mut changed_model = None;
+                            let mut new_models = None;
+                            {
+                                if let Ok(mut active_lock) = worker_control.active_session.lock() {
+                                    if let Some(active) = active_lock.as_mut() {
+                                        if let Some((cfg_id, models, current)) = find_model_config(&cfg_update.config_options) {
+                                            active.model_config_id = Some(cfg_id);
+                                            active.available_models = models.clone();
+                                            if active.current_model != current {
+                                                changed_model = current.clone();
+                                                active.current_model = current;
+                                            }
+                                            new_models = Some(models);
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(models) = new_models {
+                                let model_list: Vec<_> = models.iter().map(|m| json!({ "id": m.id, "name": m.name })).collect();
+                                let _ = worker_control.events.lock().map_err(|_| "event lock poisoned")?.append(
+                                    "session_models",
+                                    json!({ "available": model_list, "current": changed_model }),
+                                );
+                            }
+                            if let Some(model) = changed_model {
+                                let _ = worker_control.events.lock().map_err(|_| "event lock poisoned")?.append(
+                                    "session_model_changed",
+                                    json!({ "current": model }),
+                                );
+                            }
+                        }
+                        worker_control.events.lock().map_err(|_| "event lock poisoned")?.update(notification.update)?;
+                    }
                     Incoming::Stderr(line) => worker_control.events.lock().map_err(|_| "event lock poisoned")?.stderr_line(&line)?,
                     Incoming::Flush(done) => { worker_control.events.lock().map_err(|_| "event lock poisoned")?.flush()?; let _ = done.send(()); },
                     Incoming::Permission(request, reply) => {
@@ -467,6 +549,10 @@ impl Runner {
         let title_notifs = title_sessions.clone();
         let title_perms = title_sessions.clone();
         let title_emitter = self.title_emit.clone();
+        let path_env = std::env::var_os("PATH");
+        let detected = path_env.map(|p| agent::CapabilityRegistry::detect(&p)).unwrap_or_default();
+        let binary_version = detected.into_iter().find(|d| d.capabilities.harness_id == harness).and_then(|d| d.capabilities.binary_version);
+        let harness_version = binary_version.clone();
         let connection = Client.v1()
             .on_receive_notification(async move |notification: SessionNotification, _cx| {
                 let title_buf = title_notifs.lock().unwrap().get(&notification.session_id).cloned();
@@ -534,12 +620,90 @@ impl Runner {
                 } else {
                     (Vec::new(), None)
                 };
+                let (model_config_id, available_models, initial_model) = if let Some(configs) = session.config_options.as_deref() {
+                    if let Some((cfg_id, models, current)) = find_model_config(configs) {
+                        if !models.is_empty() {
+                            let catalog = agent::ModelCatalog {
+                                models: models.clone(),
+                                current_model: current.clone(),
+                                status: "ready".into(),
+                                note: None,
+                            };
+                            agent::write_cached_model_catalog(&capability_store, &harness, harness_version.as_deref(), &catalog);
+                        } else {
+                            let catalog = agent::ModelCatalog {
+                                models: Vec::new(),
+                                current_model: None,
+                                status: "unadvertised".into(),
+                                note: None,
+                            };
+                            agent::write_cached_model_catalog(&capability_store, &harness, harness_version.as_deref(), &catalog);
+                        }
+
+                        let model_list: Vec<_> = models.iter().map(|m| json!({ "id": m.id, "name": m.name })).collect();
+                        if let Ok(events) = foreground.events.lock() {
+                            let _ = events.append("session_models", json!({ "available": model_list, "current": current }));
+                        }
+
+                        (Some(cfg_id), models, current)
+                    } else {
+                        let catalog = agent::ModelCatalog {
+                            models: Vec::new(),
+                            current_model: None,
+                            status: "unadvertised".into(),
+                            note: None,
+                        };
+                        agent::write_cached_model_catalog(&capability_store, &harness, harness_version.as_deref(), &catalog);
+                        (None, Vec::new(), None)
+                    }
+                } else {
+                    (None, Vec::new(), None)
+                };
+
                 *foreground.active_session.lock().unwrap() = Some(ActiveSession {
                     session_id: session.session_id.clone(),
                     connection: connection.clone(),
                     available_modes,
                     current_mode: initial_mode,
+                    model_config_id: model_config_id.clone(),
+                    available_models: available_models.clone(),
+                    current_model: initial_model.clone(),
                 });
+
+                if let Some(cfg_id) = model_config_id {
+                    let desired = task.model.clone().or_else(|| capability_store.session_model(session_id).ok().flatten());
+                    if let Some(desired_model) = desired {
+                        if available_models.iter().any(|m| m.id == desired_model) {
+                            let current_now = foreground.active_session.lock().unwrap().as_ref().and_then(|a| a.current_model.clone());
+                            if current_now.as_deref() != Some(&desired_model) {
+                                let set_req = SetSessionConfigOptionRequest::new(
+                                    session.session_id.clone(),
+                                    cfg_id,
+                                    SessionConfigOptionValue::from(SessionConfigValueId::new(desired_model.clone())),
+                                );
+                                if connection.send_request(set_req).block_task().await.is_ok() {
+                                    let prev = {
+                                        let mut active = foreground.active_session.lock().unwrap();
+                                        let prev = active.as_ref().and_then(|a| a.current_model.clone());
+                                        if let Some(active) = active.as_mut() {
+                                            active.current_model = Some(desired_model.clone());
+                                        }
+                                        prev
+                                    };
+                                    if prev.as_deref() != Some(&desired_model) {
+                                        if let Ok(events) = foreground.events.lock() {
+                                            let _ = events.append("session_model_changed", json!({ "current": desired_model }));
+                                        }
+                                    }
+                                } else if let Ok(events) = foreground.events.lock() {
+                                    let _ = events.append("agent_log", json!({ "text": format!("Failed to apply model {desired_model}; using agent default") }));
+                                }
+                            }
+                        } else if let Ok(events) = foreground.events.lock() {
+                            let _ = events.append("agent_log", json!({ "text": format!("Desired model {desired_model} is not available in advertised models; using agent default") }));
+                        }
+                    }
+                }
                 let title_conn = connection.clone();
                 let title_task_title = task_title_clone.clone();
                 let title_harness = harness.clone();
@@ -698,6 +862,12 @@ pub fn runner_send(runner: State<'_, Runner>, session_id: i64, task_id: String, 
 /// @adr ADR-0018.D3
 #[tauri::command]
 pub async fn runner_set_mode(runner: State<'_, Runner>, session_id: i64, task_id: String, mode_id: String) -> Result<(), String> { runner.set_mode(session_id, &task_id, &mode_id).await }
+
+/// @adr ADR-0021.D2
+#[tauri::command]
+pub async fn runner_set_model(runner: State<'_, Runner>, session_id: i64, task_id: String, model_id: String) -> Result<(), String> {
+    runner.set_model(session_id, &task_id, &model_id).await
+}
 /// @adr ADR-0018.D5
 
 fn clean_title(raw: &str) -> String {
@@ -719,6 +889,12 @@ fn apply_concise_instruction(prompt: &str) -> String {
     format!("{CONCISE_INSTRUCTION}\n\n{prompt}")
 }
 
+fn find_model_config(configs: &[SessionConfigOption]) -> Option<(SessionConfigId, Vec<crate::agent::ModelOption>, Option<String>)> {
+    let model_cfg = configs.iter().find(|cfg| cfg.category == Some(SessionConfigOptionCategory::Model))?;
+    let (models, current) = crate::agent::parse_model_catalog(Some(std::slice::from_ref(model_cfg)))?;
+    Some((model_cfg.id.clone(), models, current))
+}
+
 #[cfg(test)]
 #[path = "runner_test.rs"]
-mod tests;
+pub(crate) mod tests;

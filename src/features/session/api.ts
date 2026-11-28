@@ -57,6 +57,7 @@ export interface SessionSummary {
   workspacePath: string;
   optInWorktree: boolean;
   conciseReplies: boolean;
+  model: string | null;
   createdAt: string;
 }
 
@@ -78,4 +79,9 @@ export function setSessionWorktree(id: number, enabled: boolean): Promise<Sessio
 /** @adr ADR-0020.D2 */
 export function sessionSetConcise(sessionId: number, enabled: boolean): Promise<void> {
   return invoke("session_set_concise", { sessionId, enabled });
+}
+
+/** @adr ADR-0021.D2 */
+export function sessionSetModel(sessionId: number, modelId: string | null): Promise<void> {
+  return invoke("session_set_model", { sessionId, modelId });
 }

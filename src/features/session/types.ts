@@ -10,6 +10,7 @@ export interface PlanTask {
   title: string;
   team: string;
   harness: string;
+  model?: string | null;
   worktree: boolean;
   files: string[];
   dependencies: string[];
@@ -46,5 +47,6 @@ export interface Session {
   workspacePath: string;
   optInWorktree: boolean;
   conciseReplies: boolean;
+  model: string | null;
   subAgents: SubAgentTask[];
 }

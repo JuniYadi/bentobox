@@ -227,3 +227,177 @@ fn detection_probes_adapters_in_parallel_and_preserves_order() {
             .all(|entry| entry.capabilities.binary_version.as_deref() == Some("1.0"))
     );
 }
+
+// [ADR-0021.D1] Probe parsing handles both Ungrouped and Grouped advertised options.
+#[test]
+fn adr0021_parse_model_catalog_handles_ungrouped_and_grouped() {
+    use agent_client_protocol::v1::schema::{
+        SessionConfigId, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
+        SessionConfigSelectGroup, SessionConfigSelectOption, SessionConfigSelectOptions,
+        SessionConfigValueId,
+    };
+
+    let ungrouped = vec![SessionConfigOption::new(
+        SessionConfigId::new("model"),
+        "Model",
+        SessionConfigKind::Select(SessionConfigSelect::new(
+            SessionConfigValueId::new("sonnet"),
+            SessionConfigSelectOptions::Ungrouped(vec![
+                SessionConfigSelectOption::new(SessionConfigValueId::new("haiku"), "Claude Haiku"),
+                SessionConfigSelectOption::new(SessionConfigValueId::new("sonnet"), "Claude Sonnet"),
+            ]),
+        )),
+    ).category(Some(SessionConfigOptionCategory::Model))];
+
+    let (models, current) = parse_model_catalog(Some(&ungrouped)).expect("parsed ungrouped");
+    assert_eq!(current, Some("sonnet".into()));
+    assert_eq!(models.len(), 2);
+    assert_eq!(models[0].id, "haiku");
+    assert_eq!(models[1].name, "Claude Sonnet");
+
+    let grouped = vec![SessionConfigOption::new(
+        SessionConfigId::new("model"),
+        "Model",
+        SessionConfigKind::Select(SessionConfigSelect::new(
+            SessionConfigValueId::new("gpt-4o"),
+            SessionConfigSelectOptions::Grouped(vec![
+                SessionConfigSelectGroup::new(
+                    "anthropic",
+                    "Anthropic",
+                    vec![SessionConfigSelectOption::new(SessionConfigValueId::new("claude-3-5"), "Claude 3.5")],
+                ),
+                SessionConfigSelectGroup::new(
+                    "openai",
+                    "OpenAI",
+                    vec![SessionConfigSelectOption::new(SessionConfigValueId::new("gpt-4o"), "GPT-4o")],
+                ),
+            ]),
+        )),
+    ).category(Some(SessionConfigOptionCategory::Model))];
+
+    let (models, current) = parse_model_catalog(Some(&grouped)).expect("parsed grouped");
+    assert_eq!(current, Some("gpt-4o".into()));
+    assert_eq!(models.len(), 2);
+    assert_eq!(models[0].id, "claude-3-5");
+    assert_eq!(models[1].id, "gpt-4o");
+
+    let no_model = vec![SessionConfigOption::new(
+        SessionConfigId::new("other"),
+        "Other",
+        SessionConfigKind::Select(SessionConfigSelect::new(
+            SessionConfigValueId::new("val"),
+            SessionConfigSelectOptions::Ungrouped(vec![]),
+        )),
+    )];
+    assert_eq!(parse_model_catalog(Some(&no_model)), None);
+}
+
+// [ADR-0021.D1] Cached model catalog roundtrips and only ready/unadvertised catalogs are stored.
+#[test]
+fn adr0021_model_catalog_cache_storage_and_refresh() {
+    let store = Store::open(":memory:").unwrap();
+    let catalog = ModelCatalog {
+        models: vec![ModelOption { id: "m1".into(), name: "Model 1".into() }],
+        current_model: Some("m1".into()),
+        status: "ready".into(),
+        note: None,
+    };
+
+    write_cached_model_catalog(&store, "claude", Some("1.2.3"), &catalog);
+    let cached = read_cached_model_catalog(&store, "claude", Some("1.2.3")).expect("cached catalog found");
+    assert_eq!(cached, catalog);
+
+    // An error status must never be cached.
+    let err_catalog = ModelCatalog {
+        models: vec![],
+        current_model: None,
+        status: "auth_required".into(),
+        note: Some("needs login".into()),
+    };
+    write_cached_model_catalog(&store, "codex", Some("1.0.0"), &err_catalog);
+    assert!(read_cached_model_catalog(&store, "codex", Some("1.0.0")).is_none());
+}
+
+// [ADR-0021.D1] Unavailable status for unknown harness or non-ACP harness.
+#[tokio::test]
+async fn adr0021_unavailable_for_unknown_or_non_acp_harness() {
+    let store = Store::open(":memory:").unwrap();
+    let res = list_models_with(store.clone(), "unknown-harness".into(), false, Duration::from_secs(1), Some(OsString::new())).await.unwrap();
+    assert_eq!(res.status, "unavailable");
+}
+
+// [ADR-0021.D1] Direct probe tests for ready (ungrouped and grouped), unadvertised, auth_required, timeout, single-flight, refresh bypass, and cleanup.
+#[tokio::test]
+async fn adr0021_probe_harness_scenarios_and_lifecycle() {
+    use std::os::unix::fs::PermissionsExt;
+    let test_dir = TestDir::new();
+
+    // Create a fake opencode executable that invokes Python FAKE with an environment variable SCENARIO
+    let opencode_path = test_dir.0.join("opencode");
+    let py_fake_path = test_dir.0.join("fake_agent.py");
+    std::fs::write(&py_fake_path, crate::runner::tests::FAKE).unwrap();
+
+    let scenario_file = test_dir.0.join("scenario.txt");
+    let script = format!(
+        "#!/bin/sh\nSCEN=$(cat \"{}\")\nexec python3 -u \"{}\" \"$SCEN\"\n",
+        scenario_file.display(),
+        py_fake_path.display()
+    );
+    std::fs::write(&opencode_path, script).unwrap();
+    std::fs::set_permissions(&opencode_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let path_os = Some(test_dir.0.as_os_str().to_os_string());
+
+    // Scenario 1: Ready Ungrouped
+    std::fs::write(&scenario_file, "probe_ready").unwrap();
+    let store = Store::open(":memory:").unwrap();
+    let res = list_models_with(store.clone(), "opencode".into(), false, Duration::from_secs(5), path_os.clone()).await.unwrap();
+    assert_eq!(res.status, "ready");
+    assert_eq!(res.models.len(), 4);
+    assert_eq!(res.current_model, Some("default-model".into()));
+
+    // Cache hit should return immediately
+    let cached = list_models_with(store.clone(), "opencode".into(), false, Duration::from_secs(5), path_os.clone()).await.unwrap();
+    assert_eq!(cached.status, "ready");
+    assert_eq!(cached.models.len(), 4);
+
+    // Refresh=true bypasses cache
+    std::fs::write(&scenario_file, "probe_unadvertised").unwrap();
+    let refreshed = list_models_with(store.clone(), "opencode".into(), true, Duration::from_secs(5), path_os.clone()).await.unwrap();
+    assert_eq!(refreshed.status, "unadvertised");
+    assert!(refreshed.models.is_empty());
+
+    // Scenario 2: Grouped options
+    std::fs::write(&scenario_file, "probe_grouped").unwrap();
+    let res_grouped = list_models_with(store.clone(), "opencode".into(), true, Duration::from_secs(5), path_os.clone()).await.unwrap();
+    assert_eq!(res_grouped.status, "ready");
+    assert_eq!(res_grouped.models.len(), 2);
+    assert_eq!(res_grouped.models[0].id, "g1-m1");
+    assert_eq!(res_grouped.models[1].id, "g2-m1");
+
+    // Scenario 3: Auth required
+    std::fs::write(&scenario_file, "probe_auth").unwrap();
+    let res_auth = list_models_with(store.clone(), "opencode".into(), true, Duration::from_secs(5), path_os.clone()).await.unwrap();
+    assert_eq!(res_auth.status, "auth_required");
+
+    // Scenario 4: Timeout
+    std::fs::write(&scenario_file, "probe_timeout_scenario").unwrap();
+    let res_timeout = list_models_with(store.clone(), "opencode".into(), true, Duration::from_millis(200), path_os.clone()).await.unwrap();
+    assert_eq!(res_timeout.status, "timeout");
+    assert!(read_cached_model_catalog(&store, "opencode", Some("1.0")).is_none());
+
+    // Scenario 5: Single flight - leader abort does not poison follower/future probe
+    std::fs::write(&scenario_file, "probe_flight").unwrap();
+    let s_clone = store.clone();
+    let p_clone = path_os.clone();
+    let handle = tokio::spawn(async move {
+        let _ = list_models_with(s_clone, "opencode".into(), true, Duration::from_secs(5), p_clone).await;
+    });
+    handle.abort();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // A new call after leader abort succeeds and runs its own probe
+    std::fs::write(&scenario_file, "probe_ready").unwrap();
+    let res_after_abort = list_models_with(store.clone(), "opencode".into(), true, Duration::from_secs(5), path_os.clone()).await.unwrap();
+    assert_eq!(res_after_abort.status, "ready");
+}

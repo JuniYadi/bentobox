@@ -69,14 +69,14 @@ fn migrates_v3() {
     {
         let store = Store::open(&path).unwrap();
         let conn = store.connection().unwrap();
-        conn.execute_batch("CREATE TABLE sentinel (value TEXT NOT NULL); INSERT INTO sentinel VALUES ('kept'); ALTER TABLE sessions DROP COLUMN concise_replies; DROP TABLE settings; PRAGMA user_version = 3;").unwrap();
+        conn.execute_batch("CREATE TABLE sentinel (value TEXT NOT NULL); INSERT INTO sentinel VALUES ('kept'); ALTER TABLE sessions DROP COLUMN concise_replies; ALTER TABLE sessions DROP COLUMN model; DROP TABLE settings; PRAGMA user_version = 3;").unwrap();
     }
     {
         let store = Store::open(&path).unwrap();
         let conn = store.connection().unwrap();
         let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
         let sentinel: String = conn.query_row("SELECT value FROM sentinel", [], |row| row.get(0)).unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         assert_eq!(sentinel, "kept");
         drop(conn);
         store.setting_set_with(TEST_REGISTRY, "test.boolean", &json!(true)).unwrap();

@@ -1,4 +1,5 @@
 // @adr ADR-0010.D1
+// @adr ADR-0021.D2
 mod store;
 use crate::db::Store;
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,8 @@ pub struct PlanTask {
     pub title: String,
     pub team: String,
     pub harness: String,
+    #[serde(default)]
+    pub model: Option<String>,
     pub worktree: bool,
     #[serde(default)]
     pub files: Vec<String>,
@@ -43,6 +46,7 @@ pub struct SessionSummary {
     pub workspace_path: String,
     pub opt_in_worktree: bool,
     pub concise_replies: bool,
+    pub model: Option<String>,
     pub created_at: String,
 }
 
@@ -296,6 +300,13 @@ pub async fn session_set_worktree(store: State<'_, Store>, id: i64, enabled: boo
 pub async fn session_set_concise(store: State<'_, Store>, session_id: i64, enabled: bool) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || store.set_session_concise(session_id, enabled)).await.map_err(|e| e.to_string())?
+}
+
+/// @adr ADR-0021.D2
+#[tauri::command]
+pub async fn session_set_model(store: State<'_, Store>, session_id: i64, model_id: Option<String>) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || store.set_session_model(session_id, model_id.as_deref())).await.map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

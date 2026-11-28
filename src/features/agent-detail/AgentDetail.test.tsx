@@ -39,6 +39,7 @@ const sampleSession: Session & { worktreeBranch?: string } = {
   workspacePath: "/Users/dev/bentobox",
   optInWorktree: true,
   conciseReplies: false,
+  model: null,
   subAgents: [],
   worktreeBranch: "task/gh-bridge",
 };
