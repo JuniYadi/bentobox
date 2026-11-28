@@ -42,3 +42,5 @@ dist-ssr
 !.design/frames/agent-detail.html
 !.design/frames/settings-teams.html
 !.design/frames/chat.html
+screenshoots/
+.worktrees/
