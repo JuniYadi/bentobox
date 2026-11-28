@@ -22,7 +22,32 @@ impl Store {
 
     pub(crate) fn create_named_session(&self, title: &str, project_id: i64, workspace_path: &str, opt_in_worktree: bool) -> Result<SessionSummary, String> {
         let conn = self.connection()?;
-        conn.query_row("INSERT INTO sessions (state, title, project_id, workspace_path, opt_in_worktree, created_at) VALUES ('active', ?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING id, title, workspace_path, opt_in_worktree, created_at", params![title, project_id, workspace_path, opt_in_worktree], session_summary).map_err(|e| e.to_string())
+        let summary = conn.query_row("INSERT INTO sessions (state, title, project_id, workspace_path, opt_in_worktree, created_at) VALUES ('active', ?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING id, title, workspace_path, opt_in_worktree, created_at", params![title, project_id, workspace_path, opt_in_worktree], session_summary).map_err(|e| e.to_string())?;
+        if !title.is_empty() && title != "New session" {
+            let _ = conn.execute("INSERT OR REPLACE INTO session_title_state (session_id, custom) VALUES (?1, 1)", [summary.id]);
+        }
+        Ok(summary)
+    }
+
+    /// @adr ADR-0018.D5
+    pub(crate) fn set_placeholder_title(&self, id: i64, title: &str) -> Result<(), String> {
+        let conn = self.connection()?;
+        let is_custom: bool = conn.query_row("SELECT custom FROM session_title_state WHERE session_id = ?1", [id], |r| r.get(0)).unwrap_or(0) == 1;
+        if !is_custom {
+            let _ = conn.execute("UPDATE sessions SET title = ?1 WHERE id = ?2 AND (title = '' OR title = 'New session')", params![title, id]);
+        }
+        Ok(())
+    }
+
+    /// @adr ADR-0018.D5
+    pub(crate) fn update_generated_title(&self, id: i64, title: &str) -> Result<bool, String> {
+        let conn = self.connection()?;
+        let is_custom: bool = conn.query_row("SELECT custom FROM session_title_state WHERE session_id = ?1", [id], |r| r.get(0)).unwrap_or(0) == 1;
+        if is_custom {
+            return Ok(false);
+        }
+        let rows = conn.execute("UPDATE sessions SET title = ?1 WHERE id = ?2", params![title, id]).unwrap_or(0);
+        Ok(rows > 0)
     }
 
 

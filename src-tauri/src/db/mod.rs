@@ -9,7 +9,7 @@ use std::{
 };
 use tauri::State;
 
-const LATEST_SCHEMA_VERSION: i64 = 4;
+const LATEST_SCHEMA_VERSION: i64 = 5;
 
 #[derive(Clone)]
 pub struct Store(std::sync::Arc<Mutex<Connection>>);
@@ -27,7 +27,7 @@ pub struct Event {
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, String> {
         let mut conn = Connection::open(path).map_err(|e| e.to_string())?;
-        conn.execute_batch("PRAGMA foreign_keys = ON;")
+        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
             .map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         let version: i64 = tx
@@ -80,6 +80,12 @@ impl Store {
             tx.execute_batch(
                 "CREATE TABLE settings (key TEXT PRIMARY KEY, value_type TEXT NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
                  PRAGMA user_version = 4;"
+            ).map_err(|e| e.to_string())?;
+        }
+        if version < 5 {
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS session_title_state (session_id INTEGER PRIMARY KEY REFERENCES sessions(id), custom INTEGER NOT NULL DEFAULT 0);
+                 PRAGMA user_version = 5;"
             ).map_err(|e| e.to_string())?;
         }
         tx.commit().map_err(|e| e.to_string())?;

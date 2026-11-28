@@ -21,7 +21,6 @@ export {
   type IncrementalEventsResult,
   isPermissionPending,
   getPermissionResolution,
-  getQueuedSteer,
   type TimelineItem,
   type TimelineItemType,
 } from "./timeline";

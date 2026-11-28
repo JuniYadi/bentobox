@@ -19,10 +19,9 @@ export interface PlanCardProps {
   onApprove: (revision: number) => void;
 }
 
-/** @adr ADR-0016.D3 */
+/** @adr ADR-0018.D1 */
 export function showsPlanCard(plan: Plan | null | undefined): boolean {
-  if (!plan) return false;
-  return plan.phase === "Plan" || plan.phase === "Approve";
+  return !!plan && plan.tasks.length > 1 && (plan.phase === "Plan" || plan.phase === "Approve");
 }
 
 

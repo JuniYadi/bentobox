@@ -1,8 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { ProjectSession, sessionGlyph } from "./api";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import * as core from "@tauri-apps/api/core";
+import * as dialog from "@tauri-apps/plugin-dialog";
+import { addProjectFromPicker, pickProjectDirectory, sessionGlyph, type ProjectSession } from "./api";
+
+const addedProject = { id: 1, name: "plain", rootPath: "/plain", isGit: false, createdAt: "2026-01-01T00:00:00Z" };
 
 describe("[ADR-0016.D2] session glyphs", () => {
   let directory: string;
@@ -39,5 +43,27 @@ describe("[ADR-0016.D2] session glyphs", () => {
   });
   test("returns idle when no plan or work is active", () => {
     expect(sessionGlyph(summary(null, []))).toBe("idle");
+  });
+});
+
+describe("[ADR-0019.D1] project folder picker", () => {
+  test("opens a single-directory dialog and registers the selected path", async () => {
+    const open = spyOn(dialog, "open").mockResolvedValue("/plain");
+    const invoke = spyOn(core, "invoke").mockResolvedValue(addedProject);
+    try {
+      expect(await addProjectFromPicker()).toEqual(addedProject);
+      expect(open).toHaveBeenCalledWith({ directory: true, multiple: false });
+      expect(invoke).toHaveBeenCalledWith("project_add", { path: "/plain" });
+    } finally { open.mockRestore(); invoke.mockRestore(); }
+  });
+
+  test("cancelling does not register a project", async () => {
+    const open = spyOn(dialog, "open").mockResolvedValue(null);
+    const invoke = spyOn(core, "invoke");
+    try {
+      expect(await pickProjectDirectory()).toBeNull();
+      expect(await addProjectFromPicker()).toBeNull();
+      expect(invoke).not.toHaveBeenCalled();
+    } finally { open.mockRestore(); invoke.mockRestore(); }
   });
 });

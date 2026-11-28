@@ -153,10 +153,11 @@ fn transition_checked(store: &Store, session_id: i64, task_id: &str, next: &str,
         if expected_revision.is_some_and(|revision| plan.revision != revision) { return Err("plan revision mismatch".into()); }
         let index = plan.tasks.iter().position(|task| task.id == task_id).ok_or_else(|| "unknown task".to_string())?;
         let current = plan.tasks[index].status.as_str();
-        let valid = matches!((current, next), ("queued", "running") | ("running", "review") | ("review", "completed") | ("running", "failed") | ("review", "failed") | ("failed", "queued") | ("queued", "cancelled") | ("running", "cancelled") | ("review", "cancelled"));
+        // @adr ADR-0018.D2
+        let valid = matches!((current, next), ("queued", "running") | ("running", "review") | ("review", "running") | ("review", "completed") | ("running", "failed") | ("review", "failed") | ("failed", "queued") | ("queued", "cancelled") | ("running", "cancelled") | ("review", "cancelled"));
         if !valid || !plan.approved || !matches!(plan.phase.as_str(), "Approve" | "Build" | "Review") { return Err("invalid task transition".into()); }
         if next == "running" {
-            if !matches!(plan.phase.as_str(), "Approve" | "Build") { return Err("plan approval required before a task can run".into()); }
+            if !matches!(plan.phase.as_str(), "Approve" | "Build") && !(current == "review" && plan.phase == "Review") { return Err("plan approval required before a task can run".into()); }
             if plan.tasks[index].dependencies.iter().any(|dependency| !plan.tasks.iter().any(|task| task.id == *dependency && task.status == "completed")) { return Err("task dependencies are not complete".into()); }
             plan.phase = "Build".into();
         }
@@ -254,11 +255,13 @@ pub async fn session_accept_plan(store: State<'_, Store>, session_id: i64) -> Re
 }
 
 /// @adr ADR-0010.D1
+/// @adr ADR-0019.D2
 #[tauri::command]
 pub async fn session_create(store: State<'_, Store>, title: String, project_id: i64, workspace_path: Option<String>, opt_in_worktree: bool) -> Result<SessionSummary, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let root = store.project_root(project_id)?;
+        if opt_in_worktree && !crate::project::is_git_repo(std::path::Path::new(&root)) { return Err("Not a git repository: worktree isolation is unavailable".into()); }
         let workspace_path = workspace_path.unwrap_or(root);
         store.create_named_session(&title, project_id, &workspace_path, opt_in_worktree)
     }).await.map_err(|e| e.to_string())?
@@ -273,10 +276,17 @@ pub async fn session_list(store: State<'_, Store>) -> Result<Vec<SessionSummary>
 }
 
 /// @adr ADR-0010.D1
+/// @adr ADR-0019.D2
 #[tauri::command]
 pub async fn session_set_worktree(store: State<'_, Store>, id: i64, enabled: bool) -> Result<SessionSummary, String> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || store.set_session_worktree(id, enabled)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        if enabled {
+            let root: String = store.connection()?.query_row("SELECT projects.root_path FROM sessions JOIN projects ON projects.id = sessions.project_id WHERE sessions.id = ?1", [id], |row| row.get(0)).map_err(|e| e.to_string())?;
+            if !crate::project::is_git_repo(std::path::Path::new(&root)) { return Err("Not a git repository: worktree isolation is unavailable".into()); }
+        }
+        store.set_session_worktree(id, enabled)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

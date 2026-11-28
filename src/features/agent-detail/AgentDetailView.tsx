@@ -5,10 +5,8 @@ import type { Plan, PlanTask, Session } from "../session/types";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
-import { Textarea } from "../../components/ui/textarea";
 import {
   runnerRespondPermission,
-  runnerSteer,
   runnerStop,
 } from "../runner/api";
 import {
@@ -17,7 +15,6 @@ import {
   deriveTimer,
   disabledAgentControls,
   getPermissionResolution,
-  getQueuedSteer,
   isPermissionPending,
   taskEvents,
 } from "./timeline";
@@ -43,7 +40,6 @@ export function AgentDetailView({
   eventsError,
   eventsTruncated,
 }: AgentDetailViewProps) {
-  const [steerText, setSteerText] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
@@ -51,7 +47,6 @@ export function AgentDetailView({
   const timeline = buildTimeline(allEvents, task);
   const diffStats = deriveDiffStats(allEvents, task);
   const timer = deriveTimer(allEvents, task);
-  const queuedSteer = getQueuedSteer(allEvents, task);
 
   let branchName: string | null = null;
   for (const event of taskEvents(allEvents, task)) {
@@ -68,7 +63,7 @@ export function AgentDetailView({
     : "project";
   const sessionTitle = session.title || `Session #${session.id}`;
   const agentLabel = `${task.harness || task.team} · ${task.title}`;
-  const isRunning = task.status === "running";
+  const canStop = task.status === "running" || task.status === "review";
 
   async function handleStop() {
     setActionError(null);
@@ -82,28 +77,13 @@ export function AgentDetailView({
     }
   }
 
-  async function handleRespondPermission(requestId: string, decision: "allow" | "deny") {
+  async function handleRespondPermission(requestId: string, decision: "allow" | "deny" | "allow_always") {
     setActionError(null);
     setBusyAction(`perm-${requestId}-${decision}`);
     try {
       await runnerRespondPermission(session.id, task.id, requestId, decision);
     } catch (err) {
       setActionError(`Could not respond to permission: ${String(err)}`);
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function handleSteer() {
-    const trimmed = steerText.trim();
-    if (!trimmed) return;
-    setActionError(null);
-    setBusyAction("steer");
-    try {
-      await runnerSteer(session.id, task.id, trimmed);
-      setSteerText("");
-    } catch (err) {
-      setActionError(`Could not steer agent: ${String(err)}`);
     } finally {
       setBusyAction(null);
     }
@@ -170,7 +150,7 @@ export function AgentDetailView({
             <span className="text-xs text-muted-foreground">
               {disabledAgentControls.Pause}
             </span>
-            {!isRunning && (
+            {!canStop && (
               <span className="text-xs text-muted-foreground">
                 {disabledAgentControls.Stop}
               </span>
@@ -193,9 +173,9 @@ export function AgentDetailView({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={!isRunning || busyAction === "stop"}
+                disabled={!canStop || busyAction === "stop"}
                 onClick={() => void handleStop()}
-                title={isRunning ? "Stop task" : disabledAgentControls.Stop}
+                title={canStop ? "Stop task" : disabledAgentControls.Stop}
                 aria-label="Stop"
               >
                 {busyAction === "stop" ? "Stopping…" : "Stop"}
@@ -217,7 +197,7 @@ export function AgentDetailView({
 
       {/* Honest limit notice */}
       <div className="border-b border-border bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
-        <span>Sub-agents run in their own worktree. BentoBox sets cwd to the worktree and relies on the agent&#39;s permission prompts for filesystem boundaries.</span>
+        <span>For git projects with worktree isolation enabled, BentoBox sets cwd to the worktree. For non-git projects, agents write directly in the project directory. BentoBox relies on the agent&#39;s permission prompts for filesystem boundaries.</span>
       </div>
 
       {/* Action error display */}
@@ -429,16 +409,6 @@ export function AgentDetailView({
                     <div className="flex items-center gap-1.5">
                       <Button
                         type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled
-                        title={disabledAgentControls["View diff"]}
-                        aria-label="View diff"
-                      >
-                        View diff
-                      </Button>
-                      <Button
-                        type="button"
                         variant="outline"
                         size="sm"
                         disabled={!pending || !canDeny || denyBusy}
@@ -459,10 +429,10 @@ export function AgentDetailView({
                       >
                         {allowBusy ? "Allowing…" : "Allow"}
                       </Button>
+                      {pending && payload.allow_always === true && <Button type="button" size="sm" disabled={busyAction !== null} onClick={() => void handleRespondPermission(requestId, "allow_always")}>Always allow</Button>}
                     </div>
                   </div>
                   <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-                    <p>{disabledAgentControls["View diff"]}</p>
                     {!pending && (
                       <>
                         <p>{disabledAgentControls.Allow}</p>
@@ -546,65 +516,10 @@ export function AgentDetailView({
               );
             }
 
-            if (item.type === "steer") {
-              const text = typeof payload.text === "string" ? payload.text : "";
-              const isQueued = item.event.kind === "steer_queued";
-              return (
-                <div key={item.event.id} className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">Steering prompt</span>
-                    <span>{item.event.created_at}</span>
-                  </div>
-                  <Card className="flex flex-col gap-2 p-3 text-xs">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-xs">
-                        {isQueued ? "Queued" : "Sent"}
-                      </Badge>
-                    </div>
-                    <p className="whitespace-pre-wrap">{text}</p>
-                  </Card>
-                </div>
-              );
-            }
 
             return null;
           })
         )}
-      </div>
-
-      {/* Steering Composer */}
-      <div className="border-t border-border p-3">
-        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-2">
-          {queuedSteer && (
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Badge variant="outline" className="text-xs">Queued</Badge>
-              <span className="truncate">{queuedSteer}</span>
-            </div>
-          )}
-          <Textarea
-            disabled={!isRunning || busyAction === "steer"}
-            value={steerText}
-            onChange={(e) => setSteerText(e.target.value)}
-            placeholder={isRunning ? "Steer this agent…" : disabledAgentControls.Steer}
-            aria-label="Steer this agent"
-            className="min-h-12 resize-none border-0 bg-transparent text-xs shadow-none focus-visible:ring-0"
-          />
-          <div className="flex items-center justify-between pt-1 text-xs">
-            <span className="text-muted-foreground">
-              {isRunning ? (queuedSteer ? "Prompt queued for next turn" : "") : disabledAgentControls.Steer}
-            </span>
-            <Button
-              type="button"
-              size="sm"
-              disabled={!isRunning || !steerText.trim() || busyAction === "steer"}
-              onClick={() => void handleSteer()}
-              title={isRunning ? "Steer" : disabledAgentControls.Steer}
-              aria-label="Steer"
-            >
-              {busyAction === "steer" ? "Steering…" : "Steer"}
-            </Button>
-          </div>
-        </div>
       </div>
     </div>
   );

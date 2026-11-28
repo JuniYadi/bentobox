@@ -13,16 +13,25 @@ def send(msg):
     print(json.dumps(msg), flush=True)
 def reply(id, result):
     send({'jsonrpc':'2.0','id':id,'result':result})
-def update(update):
-    send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'session','update':update}})
-def permission(id):
+def update(session_id, upd):
+    send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':session_id,'update':upd}})
+def permission(id, sess_id):
+    permission_sessions[str(id)] = sess_id
+    permission_prompts[str(id)] = session_prompts.get(sess_id)
     options = [{'optionId':'no','name':'Deny','kind':'reject_once'}]
     if scenario != 'deny_only': options.insert(0, {'optionId':'yes','name':'Allow','kind':'allow_once'})
-    send({'jsonrpc':'2.0','id':id,'method':'session/request_permission','params':{'sessionId':'session','toolCall':{'toolCallId':'tool','title':'Write file'},'options':options}})
+    if scenario == 'allow_always': options.insert(0, {'optionId':'always','name':'Always Allow','kind':'allow_always'})
+    send({'jsonrpc':'2.0','id':id,'method':'session/request_permission','params':{'sessionId':sess_id,'toolCall':{'toolCallId':'tool','title':'Write file'},'options':options}})
 answers = {}
 turn = 0
 cwd = ''
 client_caps = {}
+session_counter = 0
+selected_mode = None
+selected_model = None
+session_prompts = {}
+permission_sessions = {}
+permission_prompts = {}
 for line in sys.stdin:
     try: msg = json.loads(line)
     except ValueError: continue
@@ -35,19 +44,78 @@ for line in sys.stdin:
         reply(msg['id'], {'protocolVersion':1,'agentCapabilities':{},'authMethods':methods})
     elif method == 'session/new':
         cwd = msg['params']['cwd']
+        session_counter += 1
+        sess_id = f'session-{session_counter}'
         if scenario in ('auth_required', 'auth_unadvertised'):
             send({'jsonrpc':'2.0','id':msg['id'],'error':{'code':-32000,'message':'Authentication required'}})
-        else:
-            reply(msg['id'], {'sessionId':'session'})
+            continue
+        res = {'sessionId': sess_id}
+        if scenario in ('modes', 'multi_turn') and session_counter == 1:
+            res['modes'] = {
+                'currentModeId': 'default',
+                'availableModes': [
+                    {'id': 'default', 'name': 'Default'},
+                    {'id': 'auto', 'name': 'Auto'},
+                    {'id': 'bypassPermissions', 'name': 'Bypass'},
+                    {'id': 'acceptEdits', 'name': 'Accept Edits'}
+                ]
+            }
+        elif scenario == 'modes_no_preferred' and session_counter == 1:
+            res['modes'] = {
+                'currentModeId': 'bypassPermissions',
+                'availableModes': [
+                    {'id': 'bypassPermissions', 'name': 'Bypass'},
+                    {'id': 'custom', 'name': 'Custom'}
+                ]
+            }
+        if session_counter > 1 or scenario.startswith('title_') or scenario == 'models':
+            res['configOptions'] = [{
+                'id': 'model-select',
+                'name': 'Model',
+                'category': 'model',
+                'type': 'select',
+                'currentValue': 'default-model',
+                'options': [
+                    {'value': 'claude-3-5-haiku-latest', 'name': 'Claude 3.5 Haiku'},
+                    {'value': 'codex-luna-mini', 'name': 'Codex Luna Mini'},
+                    {'value': 'opencode-free-model', 'name': 'Free Community Model', 'description': 'Completely free model'},
+                    {'value': 'gpt-4o', 'name': 'Standard Model'}
+                ]
+            }]
+        reply(msg['id'], res)
+    elif method == 'session/set_mode':
+        selected_mode = msg.get('params', {}).get('modeId')
+        reply(msg['id'], {})
+    elif method == 'session/set_config_option':
+        val = msg.get('params', {}).get('value')
+        selected_model = val
+        reply(msg['id'], {'configOptions': []})
     elif method == 'session/prompt':
         prompt_id = msg['id']
+        prompt_session = msg.get('params', {}).get('sessionId', 'session-1')
+        session_prompts[prompt_session] = prompt_id
+        prompt_text = msg['params']['prompt'][0]['text']
+        if 'Generate a short plain-text title' in prompt_text:
+            if scenario == 'title_fail':
+                send({'jsonrpc':'2.0','id':prompt_id,'error':{'code':-32000,'message':'Title generation failed'}})
+                continue
+            if scenario == 'title_timeout':
+                time.sleep(35)
+                continue
+            update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':f'"Generated Title for {selected_model}"\n'}})
+            reply(prompt_id, {'stopReason':'end_turn'})
+            continue
         turn += 1
+        if scenario == 'multi_turn':
+            update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps({'turn': turn, 'channel': prompt_session, 'prompt': prompt_text})}})
+            reply(prompt_id, {'stopReason':'end_turn'})
+            continue
         if scenario == 'steer' and turn > 1:
-            update({'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':msg['params']['prompt'][0]['text']}})
+            update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':prompt_text}})
             reply(prompt_id, {'stopReason':'end_turn'})
             continue
         if scenario == 'inspect':
-            update({'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps({'cwd':cwd,'prompt':msg['params']['prompt'][0]['text']})}})
+            update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps({'cwd':cwd,'prompt':prompt_text})}})
             reply(prompt_id, {'stopReason':'end_turn'})
             continue
         if scenario == 'capabilities':
@@ -61,28 +129,33 @@ for line in sys.stdin:
         if scenario in ('max_tokens', 'max_turn_requests', 'refusal'):
             reply(prompt_id, {'stopReason':scenario})
             continue
-        if scenario == 'allow': update({'sessionUpdate':'agent_thought_chunk','content':{'type':'text','text':cwd}})
-        for i in range(50): update({'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'x'}})
-        update({'sessionUpdate':'tool_call','toolCallId':'tool','title':'Write file','kind':'edit','status':'pending'})
-        if scenario == 'collision': permission(1); permission('1')
-        elif scenario in ('allow', 'deny', 'deny_only', 'stop', 'stubborn', 'group', 'steer'): permission(9)
+        if scenario == 'allow': update(prompt_session, {'sessionUpdate':'agent_thought_chunk','content':{'type':'text','text':cwd}})
+        for i in range(50): update(prompt_session, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'x'}})
+        update(prompt_session, {'sessionUpdate':'tool_call','toolCallId':'tool','title':'Write file','kind':'edit','status':'pending'})
+        if scenario == 'collision': permission(1, prompt_session); permission('1', prompt_session)
+        elif scenario in ('allow', 'deny', 'deny_only', 'stop', 'stubborn', 'group', 'steer', 'allow_always'): permission(9, prompt_session)
         else: reply(prompt_id, {'stopReason':'end_turn'})
-        if scenario in ('stop', 'stubborn', 'group'): update({'sessionUpdate':'agent_thought_chunk','content':{'type':'text','text':str(os.getpid())}})
-        if scenario in ('collision', 'allow', 'deny', 'deny_only', 'stop', 'stubborn', 'group', 'steer'):
-            update({'sessionUpdate':'tool_call_update','toolCallId':'tool','status':'in_progress'})
+        if scenario in ('stop', 'stubborn', 'group'): update(prompt_session, {'sessionUpdate':'agent_thought_chunk','content':{'type':'text','text':str(os.getpid())}})
+        if scenario in ('collision', 'allow', 'deny', 'deny_only', 'stop', 'stubborn', 'group', 'steer', 'allow_always'):
+            update(prompt_session, {'sessionUpdate':'tool_call_update','toolCallId':'tool','status':'in_progress'})
     elif method == 'session/cancel':
         if scenario not in ('stubborn', 'group'): reply(prompt_id, {'stopReason':'cancelled'})
     elif 'id' in msg and 'result' in msg:
         answers[(type(msg['id']).__name__, str(msg['id']))] = msg['result']['outcome']
+        req_id = str(msg['id'])
+        sess_id = permission_sessions.get(req_id, 'session-1')
+        p_id = permission_prompts.get(req_id, session_prompts.get(sess_id))
         if scenario == 'collision' and len(answers) == 2:
             a = answers[('int','1')]; b = answers[('str','1')]
             text = 'correct' if a.get('optionId') == 'yes' and b.get('optionId') == 'no' else 'incorrect'
-            update({'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':text}})
-            reply(prompt_id, {'stopReason':'end_turn'})
-        elif scenario in ('allow','deny','deny_only','steer'):
-            if msg['result']['outcome'].get('optionId') != ('no' if scenario in ('deny','deny_only') else 'yes'): sys.exit(8)
-            update({'sessionUpdate':'tool_call_update','toolCallId':'tool','status':'completed'})
-            reply(prompt_id, {'stopReason':'end_turn'})
+            update(sess_id, {'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':text}})
+            if p_id: reply(p_id, {'stopReason':'end_turn'})
+        elif scenario in ('allow','deny','deny_only','steer','allow_always'):
+            opt = msg['result']['outcome'].get('optionId')
+            expected = 'no' if scenario in ('deny','deny_only') else ('always' if scenario == 'allow_always' else 'yes')
+            if opt != expected: sys.exit(8)
+            update(sess_id, {'sessionUpdate':'tool_call_update','toolCallId':'tool','status':'completed'})
+            if p_id: reply(p_id, {'stopReason':'end_turn'})
 if scenario in ('stubborn', 'group'): time.sleep(30)
 "#;
 
@@ -91,7 +164,16 @@ fn setup() -> (Runner, i64, Arc<TaskControl>, watch::Receiver<bool>, PlanTask) {
     let session = store.create_session("active").unwrap();
     let runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
     let (stop, receiver) = watch::channel(false);
-    let control = Arc::new(TaskControl { events: Arc::new(Mutex::new(EventWriter::new(store, session, "task".into(), runner.emit.clone()))), pending: Mutex::new(HashMap::new()), steering: Mutex::new(Some(VecDeque::new())), abort: Mutex::new(None), revision: 1, stop });
+    let control = Arc::new(TaskControl {
+        events: Arc::new(Mutex::new(EventWriter::new(store, session, "task".into(), runner.emit.clone()))),
+        pending: Mutex::new(HashMap::new()),
+        active_session: Mutex::new(None),
+        send_queue: Mutex::new(VecDeque::new()),
+        prompt_notify: Arc::new(tokio::sync::Notify::new()),
+        abort: Mutex::new(None),
+        revision: 1,
+        stop,
+    });
     runner.registry.lock().unwrap().running.insert((session, "task".into()), control.clone());
     let task = PlanTask { id: "task".into(), title: "Do the task".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "running".into() };
     (runner, session, control, receiver, task)
@@ -118,17 +200,18 @@ fn collision_ids_are_answered_independently_and_updates_continue() {
         let (runner, session, control, stop, task) = setup();
         let worker = runner.clone();
         let cwd = std::env::temp_dir().to_string_lossy().into_owned();
-        let handle = tauri::async_runtime::spawn(async move { worker.execute(&task, &cwd, control, stop, launch("collision"), Duration::from_secs(5)).await });
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session, &task, &cwd, control, stop, launch("collision"), Duration::from_secs(5)).await });
         let events = wait_for(&runner.store, session, "permission_request", 2).await;
         assert!(events.iter().any(|event| event.kind == "tool_call"));
         let ids: Vec<_> = events.iter().filter(|event| event.kind == "permission_request").map(|event| event.payload["request_id"].as_str().unwrap().to_string()).collect();
         assert_ne!(ids[0], ids[1]);
         runner.respond(session, "task", &ids[0], "allow").unwrap();
         runner.respond(session, "task", &ids[1], "deny").unwrap();
-        assert_eq!(handle.await.unwrap().unwrap(), ("review", None));
-        let events = runner.store.events(session, 0, 1000).unwrap();
+        let events = wait_for(&runner.store, session, "agent_message", 2).await;
         assert!(events.iter().any(|event| event.kind == "agent_message" && event.payload["text"] == "correct"), "events: {events:?}");
         assert_eq!(events.iter().filter(|event| event.kind == "permission_resolved").count(), 2);
+        runner.stop(session, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
     });
 }
 
@@ -136,9 +219,9 @@ fn collision_ids_are_answered_independently_and_updates_continue() {
 fn handshake_timeout_is_a_failure() {
     // [ADR-0017.D1] An unresponsive initialization is bounded.
     tauri::async_runtime::block_on(async {
-        let (runner, _, control, stop, task) = setup();
+        let (runner, session, control, stop, task) = setup();
         let cwd = std::env::temp_dir().to_string_lossy().into_owned();
-        let result = runner.execute(&task, &cwd, control, stop, launch("timeout"), Duration::from_millis(100)).await.unwrap();
+        let result = runner.execute(session, &task, &cwd, control, stop, launch("timeout"), Duration::from_millis(100)).await.unwrap();
         assert_eq!(result, ("failed", Some("handshake_timeout".into())));
     });
 }
@@ -147,9 +230,14 @@ fn handshake_timeout_is_a_failure() {
 fn stdout_noise_is_rejected_without_panicking() {
     // [ADR-0017.D1] Malformed stdout is handled by the SDK and valid messages continue.
     tauri::async_runtime::block_on(async {
-        let (runner, _, control, stop, task) = setup();
+        let (runner, session, control, stop, task) = setup();
+        let worker = runner.clone();
         let cwd = std::env::temp_dir().to_string_lossy().into_owned();
-        assert_eq!(runner.execute(&task, &cwd, control, stop, launch("noise"), Duration::from_secs(5)).await.unwrap(), ("review", None));
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session, &task, &cwd, control, stop, launch("noise"), Duration::from_secs(5)).await });
+        let events = wait_for(&runner.store, session, "task_state", 1).await;
+        assert!(events.iter().any(|event| event.kind == "task_state" && event.payload["status"] == "review"));
+        runner.stop(session, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
     });
 }
 
@@ -160,7 +248,7 @@ fn pending_permission_does_not_block_updates_and_stop_cancels_it() {
         let (runner, session, control, stop, task) = setup();
         let worker = runner.clone();
         let cwd = std::env::temp_dir().to_string_lossy().into_owned();
-        let handle = tauri::async_runtime::spawn(async move { worker.execute(&task, &cwd, control, stop, launch("stop"), Duration::from_secs(5)).await });
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session, &task, &cwd, control, stop, launch("stop"), Duration::from_secs(5)).await });
         wait_for(&runner.store, session, "permission_request", 1).await;
         let events = wait_for(&runner.store, session, "tool_call", 2).await;
         assert!(events.iter().any(|event| event.kind == "tool_call" && event.payload["status"] == "in_progress"));
@@ -178,12 +266,11 @@ fn pending_permission_does_not_block_updates_and_stop_cancels_it() {
 fn agent_crash_is_reported_as_process_exit() {
     // [ADR-0017.D1] An agent exit during a prompt is a failed task.
     tauri::async_runtime::block_on(async {
-        let (runner, _, control, stop, task) = setup();
+        let (runner, session, control, stop, task) = setup();
         let cwd = std::env::temp_dir().to_string_lossy().into_owned();
-        assert_eq!(runner.execute(&task, &cwd, control, stop, launch("crash"), Duration::from_secs(5)).await.unwrap(), ("failed", Some("process_exited".into())));
+        assert_eq!(runner.execute(session, &task, &cwd, control, stop, launch("crash"), Duration::from_secs(5)).await.unwrap(), ("failed", Some("process_exited".into())));
     });
 }
-
 #[test]
 fn deny_is_forwarded_to_the_agent() {
     // [ADR-0017.D2] Deny selects the offered reject-once option.
@@ -191,12 +278,14 @@ fn deny_is_forwarded_to_the_agent() {
         let (runner, session, control, stop, task) = setup();
         let worker = runner.clone();
         let cwd = std::env::temp_dir().to_string_lossy().into_owned();
-        let handle = tauri::async_runtime::spawn(async move { worker.execute(&task, &cwd, control, stop, launch("deny"), Duration::from_secs(5)).await });
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session, &task, &cwd, control, stop, launch("deny"), Duration::from_secs(5)).await });
         let events = wait_for(&runner.store, session, "permission_request", 1).await;
         let id = events.iter().find(|event| event.kind == "permission_request").unwrap().payload["request_id"].as_str().unwrap();
         runner.respond(session, "task", id, "deny").unwrap();
-        assert_eq!(handle.await.unwrap().unwrap(), ("review", None));
-        assert!(runner.store.events(session, 0, 1000).unwrap().iter().any(|event| event.kind == "permission_resolved" && event.payload["decision"] == "deny"));
+        let events = wait_for(&runner.store, session, "permission_resolved", 1).await;
+        assert!(events.iter().any(|event| event.kind == "permission_resolved" && event.payload["decision"] == "deny"));
+        runner.stop(session, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
     });
 }
 
@@ -337,24 +426,26 @@ fn real_agent_omp_smoke() {
 }
 
 #[test]
-fn steering_waits_for_the_current_prompt() {
-    // [ADR-0017.D2] Steering is sent as the next prompt, never concurrently.
+fn runner_send_waits_for_the_current_prompt() {
+    // [ADR-0018.D2] Messages sent during a turn are queued and sent when the turn ends.
     tauri::async_runtime::block_on(async {
         let (runner, session_id, control, stop, task) = setup();
+        session::propose(&runner.store, session_id, vec![task.clone()]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        session::transition(&runner.store, session_id, "task", "running").unwrap();
         let worker = runner.clone();
         let cwd = std::env::temp_dir().to_string_lossy().into_owned();
-        let handle = tauri::async_runtime::spawn(async move { worker.execute(&task, &cwd, control, stop, launch("steer"), Duration::from_secs(5)).await });
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task, &cwd, control, stop, launch("steer"), Duration::from_secs(5)).await });
         let events = wait_for(&runner.store, session_id, "permission_request", 1).await;
         let id = events.iter().find(|event| event.kind == "permission_request").unwrap().payload["request_id"].as_str().unwrap();
-        runner.steer(session_id, "task", "Continue carefully".into()).unwrap();
+        runner.send(session_id, "task", "Continue carefully".into()).unwrap();
         runner.respond(session_id, "task", id, "allow").unwrap();
-        assert_eq!(handle.await.unwrap().unwrap(), ("review", None));
-        let events = runner.store.events(session_id, 0, 1000).unwrap();
-        let queued = events.iter().find(|event| event.kind == "steer_queued").unwrap();
-        let sent = events.iter().find(|event| event.kind == "steer_sent").unwrap();
-        assert!(queued.id < sent.id);
-        assert_eq!(sent.payload["text"], "Continue carefully");
+        let events = wait_for(&runner.store, session_id, "agent_message", 2).await;
+        let user_msg = events.iter().find(|event| event.kind == "user_message" && event.payload["text"] == "Continue carefully").unwrap();
+        assert_eq!(user_msg.payload["plan_task_id"], "task");
         assert!(events.iter().any(|event| event.kind == "agent_message" && event.payload["text"] == "Continue carefully"));
+        runner.stop(session_id, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
     });
 }
 
@@ -370,8 +461,10 @@ fn worktree_cwd_and_prompt_are_the_agent_received_values() {
         }
         let (runner, session_id, control, stop, mut task) = setup();
         task.worktree = true;
-        assert_eq!(runner.execute(&task, root.to_str().unwrap(), control, stop, launch("inspect"), Duration::from_secs(5)).await.unwrap().0, "review");
-        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        let worker = runner.clone();
+        let root_str = root.to_str().unwrap().to_string();
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task, &root_str, control, stop, launch("inspect"), Duration::from_secs(5)).await });
+        let events = wait_for(&runner.store, session_id, "agent_message", 1).await;
         let handoff = events.iter().find(|event| event.kind == "handoff").unwrap();
         let received = events.iter().find(|event| event.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
         let received: serde_json::Value = serde_json::from_str(received).unwrap();
@@ -383,6 +476,8 @@ fn worktree_cwd_and_prompt_are_the_agent_received_values() {
         assert!(!prompt.contains("Files:"));
         assert!(events.iter().all(|event| event.kind != "usage"));
         let path = handoff.payload["handoff"]["worktree_path"].as_str().unwrap();
+        runner.stop(session_id, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
         assert!(std::process::Command::new("git").args(["worktree", "remove", "--force", path]).current_dir(&root).status().unwrap().success());
         std::fs::remove_dir_all(root).unwrap();
     });
@@ -469,7 +564,7 @@ fn unavailable_permission_options_are_not_selectable() {
         let (runner, session_id, control, stop, task) = setup();
         let worker = runner.clone();
         let cwd = std::env::temp_dir().to_string_lossy().into_owned();
-        let handle = tauri::async_runtime::spawn(async move { worker.execute(&task, &cwd, control, stop, launch("deny_only"), Duration::from_secs(5)).await });
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task, &cwd, control, stop, launch("deny_only"), Duration::from_secs(5)).await });
         let events = wait_for(&runner.store, session_id, "permission_request", 1).await;
         let request = events.iter().find(|event| event.kind == "permission_request").unwrap();
         assert_eq!(request.payload["can_allow"], false);
@@ -477,7 +572,9 @@ fn unavailable_permission_options_are_not_selectable() {
         let id = request.payload["request_id"].as_str().unwrap();
         assert!(runner.respond(session_id, "task", id, "allow").is_err());
         runner.respond(session_id, "task", id, "deny").unwrap();
-        assert_eq!(handle.await.unwrap().unwrap(), ("review", None));
+        wait_for(&runner.store, session_id, "permission_resolved", 1).await;
+        runner.stop(session_id, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
     });
 }
 
@@ -508,7 +605,7 @@ fn stop_terminates_agent_that_ignores_cancel_and_stdin_close() {
         let (runner, session_id, control, stop, task) = setup();
         let worker = runner.clone();
         let cwd = std::env::temp_dir().to_string_lossy().into_owned();
-        let handle = tauri::async_runtime::spawn(async move { worker.execute(&task, &cwd, control, stop, launch("stubborn"), Duration::from_secs(5)).await });
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task, &cwd, control, stop, launch("stubborn"), Duration::from_secs(5)).await });
         let events = wait_for(&runner.store, session_id, "agent_thought", 1).await;
         let pid = events.iter().find(|event| event.kind == "agent_thought").unwrap().payload["text"].as_str().unwrap().to_owned();
         runner.stop(session_id, "task").unwrap();
@@ -560,8 +657,8 @@ fn stop_answers_all_pending_permissions_even_if_event_storage_fails() {
         let (second_tx, second_rx) = oneshot::channel();
         {
             let mut pending = control.pending.lock().unwrap();
-            pending.insert("first".into(), PendingPermission { allow: None, deny: None, answer: first_tx });
-            pending.insert("second".into(), PendingPermission { allow: None, deny: None, answer: second_tx });
+            pending.insert("first".into(), PendingPermission { allow: None, deny: None, allow_always: None, answer: first_tx });
+            pending.insert("second".into(), PendingPermission { allow: None, deny: None, allow_always: None, answer: second_tx });
         }
         runner.store.connection().unwrap().execute_batch("PRAGMA query_only = ON;").unwrap();
         assert!(runner.stop(session_id, "task").is_err());
@@ -686,4 +783,398 @@ fn initialize_advertises_no_fs_and_no_terminal_capabilities() {
         assert!(text.contains("write=none") || text.contains("write=False"));
         runner.shutdown();
     });
+}
+
+#[test]
+fn mode_order_prefers_auto_over_accept_edits_and_never_selects_bypass() {
+    // [ADR-0018.D3] the default mode is chosen from the advertised list in the order auto, acceptEdits, default, and bypassPermissions is never chosen automatically
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, task) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        runner.store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id]).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("modes")));
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        assert_eq!(runner.start(session_id).unwrap(), ["task"]);
+        let events = wait_for(&runner.store, session_id, "session_modes", 1).await;
+        let mode_event = events.iter().find(|e| e.kind == "session_modes").unwrap();
+        assert_eq!(mode_event.payload["current"], "auto");
+        assert_eq!(mode_event.payload["plan_task_id"], "task");
+        let available = mode_event.payload["available"].as_array().unwrap();
+        assert_eq!(available.len(), 4);
+
+        runner.set_mode(session_id, "task", "bypassPermissions").await.unwrap();
+        let events = wait_for(&runner.store, session_id, "session_mode_changed", 1).await;
+        let changed = events.iter().find(|e| e.kind == "session_mode_changed").unwrap();
+        assert_eq!(changed.payload["current"], "bypassPermissions");
+
+        assert!(runner.set_mode(session_id, "task", "nonexistent").await.is_err());
+        runner.shutdown();
+    });
+}
+
+#[test]
+fn mode_avoids_bypass_permissions_when_preferred_modes_absent() {
+    // [ADR-0018.D3] bypassPermissions is never chosen automatically even if it is the current mode
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, task) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        runner.store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id]).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("modes_no_preferred")));
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        assert_eq!(runner.start(session_id).unwrap(), ["task"]);
+        let events = wait_for(&runner.store, session_id, "session_modes", 1).await;
+        let mode_event = events.iter().find(|e| e.kind == "session_modes").unwrap();
+        assert_eq!(mode_event.payload["current"], "custom");
+        runner.shutdown();
+    });
+}
+
+#[test]
+fn agent_without_modes_still_produces_permission_prompts() {
+    // [ADR-0018.D3] an agent with no modes still produces permission prompts
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, task) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        runner.store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id]).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("allow")));
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        assert_eq!(runner.start(session_id).unwrap(), ["task"]);
+        let events = wait_for(&runner.store, session_id, "permission_request", 1).await;
+        assert!(events.iter().any(|e| e.kind == "permission_request"));
+        assert!(events.iter().all(|e| e.kind != "session_modes"));
+        runner.shutdown();
+    });
+}
+
+#[test]
+fn allow_always_sent_only_when_offered() {
+    // [ADR-0018.D3] AllowAlways is sent only when offered
+    tauri::async_runtime::block_on(async {
+        let (runner, session_id, control, stop, task) = setup();
+        let worker = runner.clone();
+        let cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        let cwd_clone = cwd.clone();
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task, &cwd_clone, control, stop, launch("allow"), Duration::from_secs(5)).await });
+        let events = wait_for(&runner.store, session_id, "permission_request", 1).await;
+        let req = events.iter().find(|e| e.kind == "permission_request").unwrap();
+        assert_eq!(req.payload["allow_always"], false);
+        let id = req.payload["request_id"].as_str().unwrap();
+        assert!(runner.respond(session_id, "task", id, "allow_always").is_err());
+        runner.respond(session_id, "task", id, "allow").unwrap();
+        wait_for(&runner.store, session_id, "permission_resolved", 1).await;
+        runner.stop(session_id, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
+
+        let (runner2, session_id2, control2, stop2, task2) = setup();
+        let worker2 = runner2.clone();
+        let handle2 = tauri::async_runtime::spawn(async move { worker2.execute(session_id2, &task2, &cwd, control2, stop2, launch("allow_always"), Duration::from_secs(5)).await });
+        let events2 = wait_for(&runner2.store, session_id2, "permission_request", 1).await;
+        let req2 = events2.iter().find(|e| e.kind == "permission_request").unwrap();
+        assert_eq!(req2.payload["allow_always"], true);
+        let id2 = req2.payload["request_id"].as_str().unwrap();
+        runner2.respond(session_id2, "task", id2, "allow_always").unwrap();
+        wait_for(&runner2.store, session_id2, "permission_resolved", 1).await;
+        runner2.stop(session_id2, "task").unwrap();
+        assert_eq!(handle2.await.unwrap().unwrap(), ("cancelled", None));
+    });
+}
+
+#[test]
+fn multi_turn_second_message_reuses_same_acp_session() {
+    // [ADR-0018.D2] a second message reuses the same ACP session
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, task) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        runner.store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id]).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("multi_turn")));
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        assert_eq!(runner.start(session_id).unwrap(), ["task"]);
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            if runner.plan(session_id).unwrap().unwrap().tasks[0].status == "review" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        let msg1 = events.iter().find(|e| e.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
+        let parsed1: serde_json::Value = serde_json::from_str(msg1).unwrap();
+        assert_eq!(parsed1["turn"], 1);
+        let session_id_str = parsed1["channel"].as_str().unwrap().to_string();
+
+        runner.send(session_id, "task", "Follow up message".into()).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let events = runner.store.events(session_id, 0, 1000).unwrap();
+            if events.iter().filter(|e| e.kind == "agent_message").count() >= 2 {
+                let plan = runner.plan(session_id).unwrap().unwrap();
+                if plan.tasks[0].status == "review" { break; }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        let msgs: Vec<_> = events.iter().filter(|e| e.kind == "agent_message").collect();
+        let parsed2: serde_json::Value = serde_json::from_str(msgs[1].payload["text"].as_str().unwrap()).unwrap();
+        assert_eq!(parsed2["turn"], 2);
+        assert_eq!(parsed2["channel"], session_id_str);
+        assert_eq!(parsed2["prompt"], "Follow up message");
+
+        runner.shutdown();
+    });
+}
+
+#[test]
+fn title_model_selection_per_harness_with_fallback() {
+    // [ADR-0018.D5] for each harness, the title model is picked from the advertised list (haiku, luna, a free model), and any other harness or a missing match falls back to the main chat's current model
+    tauri::async_runtime::block_on(async {
+        for (harness, expected_model) in [
+            ("claude-code", "claude-3-5-haiku-latest"),
+            ("codex", "codex-luna-mini"),
+            ("opencode", "opencode-free-model"),
+            ("other-agent", "None"),
+        ] {
+            let captured_title = Arc::new(Mutex::new(None));
+            let cap = captured_title.clone();
+            let store = Store::open(":memory:").unwrap();
+            let session_id = store.create_session("active").unwrap();
+            store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id]).unwrap();
+            let mut runner = Runner::with_emitters(store.clone(), Arc::new(|_, _| {}), Arc::new(move |_, title| {
+                *cap.lock().unwrap() = Some(title.to_string());
+            }));
+            runner.launch = Arc::new(|_| Some(launch("models")));
+            let task = PlanTask { id: "task".into(), title: "Write an algorithm".into(), team: "".into(), harness: harness.into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+            session::propose(&runner.store, session_id, vec![task]).unwrap();
+            session::approve(&runner.store, session_id, 1).unwrap();
+            runner.start(session_id).unwrap();
+
+            tokio::time::timeout(Duration::from_secs(5), async { loop {
+                if captured_title.lock().unwrap().is_some() { break; }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }}).await.unwrap();
+
+            let title = captured_title.lock().unwrap().clone().unwrap();
+            assert!(title.contains(expected_model), "harness {harness} expected {expected_model}, got {title}");
+            runner.shutdown();
+        }
+    });
+}
+
+#[test]
+fn title_prompt_and_reply_do_not_appear_in_chat_event_log() {
+    // [ADR-0018.D5] the title prompt and reply do not appear in the chat event log
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, task) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        runner.store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id]).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("models")));
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        runner.start(session_id).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let session = runner.store.list_sessions().unwrap().into_iter().find(|s| s.id == session_id).unwrap();
+            if session.title.contains("Generated Title") { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        let events = runner.store.events(session_id, 0, 1000).unwrap();
+        assert!(!events.iter().any(|e| e.payload.to_string().contains("Generate a short plain-text title")));
+        assert!(!events.iter().any(|e| e.payload.to_string().contains("Generated Title")));
+        runner.shutdown();
+    });
+}
+
+#[test]
+fn typed_title_not_overwritten_by_generated_title() {
+    // [ADR-0018.D5] a title the user typed is not overwritten by the generated one
+    tauri::async_runtime::block_on(async {
+        let store = Store::open(":memory:").unwrap();
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let proj = store.add_project("proj", &root).unwrap();
+        let session = store.create_named_session("User Typed Title", proj.id, &root, false).unwrap();
+        let mut runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
+        runner.launch = Arc::new(|_| Some(launch("models")));
+        let task = PlanTask { id: "task".into(), title: "Do work".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+        session::propose(&runner.store, session.id, vec![task]).unwrap();
+        session::approve(&runner.store, session.id, 1).unwrap();
+        runner.start(session.id).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let plan = runner.plan(session.id).unwrap().unwrap();
+            if plan.tasks[0].status == "review" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+        let sessions = runner.store.list_sessions().unwrap();
+        let current = sessions.into_iter().find(|s| s.id == session.id).unwrap();
+        assert_eq!(current.title, "User Typed Title");
+        runner.shutdown();
+    });
+}
+
+#[test]
+fn failed_or_timed_out_title_keeps_truncated_first_message() {
+    // [ADR-0018.D5] a failed or timed-out title call keeps the truncated first message as the title
+    tauri::async_runtime::block_on(async {
+        let store = Store::open(":memory:").unwrap();
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let proj = store.add_project("proj", &root).unwrap();
+        let session = store.create_named_session("New session", proj.id, &root, false).unwrap();
+        let mut runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
+        runner.launch = Arc::new(|_| Some(launch("title_fail")));
+        let task = PlanTask { id: "task".into(), title: "Investigate and solve the issue with concurrency in runner".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+        session::propose(&runner.store, session.id, vec![task]).unwrap();
+        session::approve(&runner.store, session.id, 1).unwrap();
+        runner.start(session.id).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let plan = runner.plan(session.id).unwrap().unwrap();
+            if plan.tasks[0].status == "review" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+        let sessions = runner.store.list_sessions().unwrap();
+        let current = sessions.into_iter().find(|s| s.id == session.id).unwrap();
+        assert_eq!(current.title, "Investigate and solve the issue with concurrency in runner");
+        runner.shutdown();
+    });
+}
+
+#[test]
+fn non_git_project_runs_in_project_root_without_worktree() {
+    // [ADR-0019.D2] Register non-git directories with a warning and run agents directly in the selected directory
+    tauri::async_runtime::block_on(async {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("bentobox-nongit-{unique}"));
+        std::fs::create_dir_all(&root).unwrap();
+        let canonical_root = root.canonicalize().unwrap();
+        let (runner, session_id, control, stop, mut task) = setup();
+        task.worktree = true;
+        let worker = runner.clone();
+        let canon_str = canonical_root.to_str().unwrap().to_string();
+        let handle = tauri::async_runtime::spawn(async move { worker.execute(session_id, &task, &canon_str, control, stop, launch("inspect"), Duration::from_secs(5)).await });
+        let events = wait_for(&runner.store, session_id, "agent_message", 1).await;
+        let handoff = events.iter().find(|event| event.kind == "handoff").unwrap();
+        assert_eq!(handoff.payload["handoff"]["worktree_path"], canonical_root.to_str().unwrap());
+        assert!(handoff.payload.get("branch").is_none());
+
+        let received = events.iter().find(|event| event.kind == "agent_message").unwrap().payload["text"].as_str().unwrap();
+        let received: serde_json::Value = serde_json::from_str(received).unwrap();
+        assert_eq!(received["cwd"], canonical_root.to_str().unwrap());
+
+        runner.stop(session_id, "task").unwrap();
+        assert_eq!(handle.await.unwrap().unwrap(), ("cancelled", None));
+        std::fs::remove_dir_all(root).unwrap();
+    });
+}
+
+#[test]
+fn stale_prompt_notify_does_not_fail_idle_task() {
+    // [ADR-0018.D2] Stale prompt_notify does not fall through to failed protocol_error
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, task) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        runner.store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id]).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("multi_turn")));
+        session::propose(&runner.store, session_id, vec![task]).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        runner.start(session_id).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            if runner.plan(session_id).unwrap().unwrap().tasks[0].status == "review" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        // Spurious prompt_notify permit with empty queue
+        let control = runner.control(session_id, "task").unwrap();
+        control.prompt_notify.notify_one();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(runner.plan(session_id).unwrap().unwrap().tasks[0].status, "review");
+
+        // Real follow up prompt works normally
+        runner.send(session_id, "task", "Valid turn".into()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let events = runner.store.events(session_id, 0, 1000).unwrap();
+            if events.iter().filter(|e| e.kind == "agent_message").count() >= 2 {
+                if runner.plan(session_id).unwrap().unwrap().tasks[0].status == "review" { break; }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        runner.shutdown();
+    });
+}
+
+#[test]
+fn recover_marks_orphaned_review_tasks_interrupted() {
+    // [ADR-0018.D2] Startup recovery marks orphaned review tasks failed with reason interrupted
+    let store = Store::open(":memory:").unwrap();
+    let session_id = store.create_session("active").unwrap();
+    let runner = Runner::with_emitter(store.clone(), Arc::new(|_, _| {}));
+    let task = PlanTask { id: "task-r".into(), title: "Review task".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+    session::propose(&store, session_id, vec![task]).unwrap();
+    session::approve(&store, session_id, 1).unwrap();
+    session::transition(&store, session_id, "task-r", "running").unwrap();
+    session::transition(&store, session_id, "task-r", "review").unwrap();
+
+    runner.recover().unwrap();
+
+    let plan = runner.plan(session_id).unwrap().unwrap();
+    assert_eq!(plan.tasks[0].status, "failed");
+    let events = store.events(session_id, 0, 100).unwrap();
+    let fail_event = events.iter().find(|e| e.kind == "task_state" && e.payload["status"] == "failed").unwrap();
+    assert_eq!(fail_event.payload["reason"], "interrupted");
+}
+
+#[test]
+fn idle_review_tasks_do_not_count_against_max_running_and_stop_cancels_them() {
+    // [ADR-0018.D2] Review tasks do not block max running concurrency and Stop terminates review tasks
+    tauri::async_runtime::block_on(async {
+        let (mut runner, session_id, _, _, template) = setup();
+        runner.registry.lock().unwrap().running.clear();
+        runner.store.connection().unwrap().execute("UPDATE sessions SET workspace_path = ?1 WHERE id = ?2", rusqlite::params![std::env::temp_dir().to_string_lossy().to_string(), session_id]).unwrap();
+        runner.launch = Arc::new(|_| Some(launch("multi_turn")));
+        let tasks = (0..4).map(|i| {
+            let mut t = template.clone();
+            t.id = format!("t-{i}");
+            t
+        }).collect();
+        session::propose(&runner.store, session_id, tasks).unwrap();
+        session::approve(&runner.store, session_id, 1).unwrap();
+        assert_eq!(runner.start(session_id).unwrap(), ["t-0", "t-1", "t-2"]);
+
+        // Wait for all 3 running tasks to enter review
+        tokio::time::timeout(Duration::from_secs(5), async { loop {
+            let plan = runner.plan(session_id).unwrap().unwrap();
+            if plan.tasks[0..3].iter().all(|t| t.status == "review") { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        // Since tasks 0..3 are idle in review, task 3 can now be started!
+        assert_eq!(runner.start(session_id).unwrap(), ["t-3"]);
+
+        // Stop must work on an idle review task
+        runner.stop(session_id, "t-0").unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async { loop {
+            let plan = runner.plan(session_id).unwrap().unwrap();
+            if plan.tasks[0].status == "cancelled" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }}).await.unwrap();
+
+        runner.shutdown();
+    });
+}
+
+#[test]
+fn session_transition_allows_review_to_running() {
+    // [ADR-0018.D2] Task transition must allow review -> running for a subsequent turn
+    let store = Store::open(":memory:").unwrap();
+    let session = store.create_session("active").unwrap();
+    let task = PlanTask { id: "task-1".into(), title: "Work".into(), team: "".into(), harness: "fake".into(), worktree: false, files: vec![], dependencies: vec![], estimated_tokens: None, status: "queued".into() };
+    session::propose(&store, session, vec![task]).unwrap();
+    session::approve(&store, session, 1).unwrap();
+    session::transition(&store, session, "task-1", "running").unwrap();
+    session::transition(&store, session, "task-1", "review").unwrap();
+    assert_eq!(session::transition(&store, session, "task-1", "running").unwrap().tasks[0].status, "running");
 }

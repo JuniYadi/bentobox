@@ -1,8 +1,11 @@
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
 fn temp() -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!("bentobox-project-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let root = std::env::temp_dir().join(format!("bentobox-project-{}-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(), NEXT_TEMP.fetch_add(1, Ordering::Relaxed)));
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -11,24 +14,87 @@ fn repo(path: &Path) {
     assert!(std::process::Command::new("git").args(["init", "-q"]).current_dir(path).status().unwrap().success());
 }
 
-// [ADR-0016.D2] Projects require Git repositories and normalize subdirectories to repository roots.
+// [ADR-0019.D2] Non-git directories register directly; Git subdirectories resolve to their repository root.
 #[test]
-fn add_requires_git_and_resolves_subdirectory() {
+fn add_non_git_and_resolve_git_subdirectory() {
     let root = temp();
     let store = Store::open(root.join("db.sqlite")).unwrap();
     let non_repo = root.join("plain");
     std::fs::create_dir_all(&non_repo).unwrap();
-    assert!(repository_root(&non_repo).is_err());
+    let (plain_root, plain_name) = project_directory(&non_repo, true).unwrap();
+    assert_eq!(Path::new(&plain_root), non_repo.canonicalize().unwrap());
+    let plain = store.add_project(&plain_name, &plain_root).unwrap();
+    assert!(!plain.is_git);
     let repository = root.join("repository");
     repo(&repository);
     let sub = repository.join("src");
     std::fs::create_dir_all(&sub).unwrap();
     let (canonical, _) = repository_root(&repository).unwrap();
-    let (sub_root, name) = repository_root(&sub).unwrap();
+    let (sub_root, name) = project_directory(&sub, true).unwrap();
     assert_eq!(canonical, sub_root);
-    let first = store.add_project(&name, &canonical).unwrap();
-    assert_eq!(store.add_project(&name, &sub_root).unwrap(), first);
-    assert_eq!(store.list_projects().unwrap(), vec![first]);
+    let git_project = store.add_project(&name, &sub_root).unwrap();
+    assert!(git_project.is_git);
+    assert_eq!(store.add_project(&name, &canonical).unwrap(), git_project);
+    let listed = store.list_projects().unwrap();
+    assert_eq!(listed, vec![plain.clone(), git_project.clone()]);
+    let tree = store.project_tree().unwrap();
+    assert_eq!(tree.iter().map(|entry| &entry.project).collect::<Vec<_>>(), vec![&plain, &git_project]);
+    assert_eq!(serde_json::to_value(&plain).unwrap()["isGit"], false);
+    assert_eq!(serde_json::to_value(&git_project).unwrap()["isGit"], true);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// [ADR-0019.D2] Listing and tree reflect repository changes after registration.
+#[test]
+fn project_git_status_is_recomputed_when_listed() {
+    let root = temp();
+    let store = Store::open(root.join("db.sqlite")).unwrap();
+    let directory = root.join("project");
+    std::fs::create_dir_all(&directory).unwrap();
+    let (path, name) = project_directory(&directory, true).unwrap();
+    assert!(!store.add_project(&name, &path).unwrap().is_git);
+    repo(&directory);
+    assert!(store.list_projects().unwrap()[0].is_git);
+    assert!(store.project_tree().unwrap()[0].project.is_git);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// [ADR-0019.D2] A leading dash in a directory name is never interpreted as a Git option.
+#[test]
+fn project_name_starting_with_dash_is_a_git_directory() {
+    let root = temp();
+    let directory = root.join("-repository");
+    repo(&directory);
+    let store = Store::open(root.join("db.sqlite")).unwrap();
+    let (path, name) = project_directory(&directory, true).unwrap();
+    assert_eq!(name, "-repository");
+    assert!(store.add_project(&name, &path).unwrap().is_git);
+    assert!(store.list_projects().unwrap()[0].is_git);
+    assert!(store.project_tree().unwrap()[0].project.is_git);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// [ADR-0019.D1] Untrusted selected paths must exist and be directories.
+#[test]
+fn selected_path_must_exist_and_be_a_directory() {
+    let root = temp();
+    assert!(project_directory(&root.join("missing"), true).is_err());
+    let file = root.join("file");
+    std::fs::write(&file, "test").unwrap();
+    assert!(project_directory(&file, true).unwrap_err().contains("directory"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// [ADR-0019.D1] Canonicalization prevents a symlink from hiding a managed worktree path.
+#[cfg(unix)]
+#[test]
+fn selected_symlink_into_managed_worktree_is_rejected() {
+    let root = temp();
+    let managed = root.join(".bentobox-worktrees").join("task");
+    std::fs::create_dir_all(&managed).unwrap();
+    let link = root.join("selected");
+    std::os::unix::fs::symlink(&managed, &link).unwrap();
+    assert!(project_directory(&link, true).unwrap_err().contains(".bentobox-worktrees"));
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -168,20 +234,21 @@ fn project_tree_and_unassigned_sessions() {
 #[test]
 fn repository_root_path_expansion_and_worktree_rejection() {
     let root = temp();
-    let home_dir = root.join("mock-home");
+    let home_dir = std::path::PathBuf::from(std::env::var_os("HOME").unwrap()).join(root.file_name().unwrap());
     let repo_dir = home_dir.join("my-repo");
     repo(&repo_dir);
 
-    // Set HOME for this test run
-    unsafe { std::env::set_var("HOME", &home_dir); }
-    let tilde_path = Path::new("~/my-repo");
-    let (canonical, name) = repository_root(tilde_path).unwrap();
+    let tilde_path = Path::new("~").join(root.file_name().unwrap()).join("my-repo");
+    let (canonical, name) = repository_root(&tilde_path).unwrap();
     assert_eq!(name, "my-repo");
     assert_eq!(canonical, repo_dir.canonicalize().unwrap().to_str().unwrap());
 
     let worktree_repo = root.join(".bentobox-worktrees").join("child-repo");
     repo(&worktree_repo);
     assert!(repository_root(&worktree_repo).unwrap_err().contains(".bentobox-worktrees"));
+    // [ADR-0019.D1] The folder-picker path cannot bypass managed-worktree rejection.
+    assert!(project_directory(&worktree_repo, true).unwrap_err().contains(".bentobox-worktrees"));
 
+    std::fs::remove_dir_all(home_dir).unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }

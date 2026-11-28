@@ -9,8 +9,7 @@ export type TimelineItemType =
   | "permission"
   | "task_state"
   | "agent_message"
-  | "agent_thought"
-  | "steer";
+  | "agent_thought";
 
 /** @adr ADR-0017.D2 */
 export interface TimelineItem {
@@ -21,17 +20,15 @@ export interface TimelineItem {
 /** @adr ADR-0017.D2 */
 export const disabledAgentControls = {
   Pause: "ACP protocol does not support pausing agent execution.",
-  Stop: "Stop is only available while the task is running.",
+  Stop: "Stop is only available while the task is running or in review.",
   "Take over": "Take over is a separate workflow (ADR-0010) and is not available yet.",
   Allow: "Permission response is only available for pending requests offering allow.",
   Deny: "Permission response is only available for pending requests offering deny.",
-  "View diff": "Permission diff viewing is not available yet.",
-  Steer: "Steer is only available while the task is running.",
 } as const;
 
-/** @adr ADR-0017.D2 */
+/** @adr ADR-0018.D4 */
 export function isPermissionPending(events: DbEvent[], requestId: string, taskStatus: string): boolean {
-  if (taskStatus !== "running") return false;
+  if (taskStatus !== "running" && taskStatus !== "review") return false;
   const isResolved = events.some((event) => {
     if (event.kind !== "permission_resolved") return false;
     const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
@@ -43,7 +40,7 @@ export function isPermissionPending(events: DbEvent[], requestId: string, taskSt
 }
 
 /** @adr ADR-0017.D2 */
-export function getPermissionResolution(events: DbEvent[], requestId: string): "allow" | "deny" | "cancelled" | null {
+export function getPermissionResolution(events: DbEvent[], requestId: string): "allow" | "deny" | "allow_always" | "cancelled" | null {
   for (const event of events) {
     if (event.kind === "permission_resolved") {
       const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
@@ -51,7 +48,7 @@ export function getPermissionResolution(events: DbEvent[], requestId: string): "
         : null;
       if (String(payload?.request_id) === requestId) {
         const decision = payload?.decision;
-        if (decision === "allow" || decision === "deny" || decision === "cancelled") {
+        if (decision === "allow" || decision === "deny" || decision === "allow_always" || decision === "cancelled") {
           return decision;
         }
       }
@@ -60,37 +57,9 @@ export function getPermissionResolution(events: DbEvent[], requestId: string): "
   return null;
 }
 
-/** @adr ADR-0017.D2 */
-export function getQueuedSteer(events: DbEvent[], task: PlanTask): string | null {
-  const relevant = taskEvents(events, task);
-  let latestQueued: { id: number; text: string } | null = null;
-  let latestSentId = -1;
-
-  for (const event of relevant) {
-    const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
-      ? (event.payload as Record<string, JsonValue>)
-      : null;
-    if (event.kind === "steer_queued" && typeof payload?.text === "string") {
-      if (!latestQueued || event.id > latestQueued.id) {
-        latestQueued = { id: event.id, text: payload.text };
-      }
-    } else if (event.kind === "steer_sent") {
-      if (event.id > latestSentId) {
-        latestSentId = event.id;
-      }
-    }
-  }
-
-  if (latestQueued && latestQueued.id > latestSentId) {
-    return latestQueued.text;
-  }
-  return null;
-}
 
 /**
- * No producer writes these payload keys yet, and SQL tasks are not linked to
- * plan tasks. Until an agent-execution decision lands, a task may have no
- * attributed events.
+ * Attributes events to a plan task using the explicit payload IDs.
  *
  * @adr ADR-0016.D4
  */
@@ -101,6 +70,20 @@ export function taskEvents(events: DbEvent[], task: PlanTask): DbEvent[] {
       : null;
     return payload?.plan_task_id === task.id || payload?.task_id === task.id;
   });
+}
+
+/** @adr ADR-0018.D4 */
+export function partitionChatTimeline(events: DbEvent[], task: PlanTask): { chatItems: DbEvent[]; activityItems: DbEvent[] } {
+  const chatItems: DbEvent[] = [];
+  const activityItems: DbEvent[] = [];
+  const relevant = taskEvents(events, task);
+  for (const event of relevant) {
+    const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) ? event.payload as Record<string, JsonValue> : {};
+    const requestId = String(payload.request_id ?? event.id);
+    const chat = typeof payload.parent_tool_call_id !== "string" && (event.kind === "user_message" || event.kind === "agent_message" || (event.kind === "permission_request" && isPermissionPending(relevant, requestId, task.status)));
+    (chat ? chatItems : activityItems).push(event);
+  }
+  return { chatItems, activityItems };
 }
 
 /**
@@ -144,8 +127,6 @@ export function buildTimeline(events: DbEvent[], task: PlanTask): TimelineItem[]
       items.push({ type: "agent_message", event });
     } else if (event.kind === "agent_thought") {
       items.push({ type: "agent_thought", event });
-    } else if (event.kind === "steer_queued" || event.kind === "steer_sent") {
-      items.push({ type: "steer", event });
     }
   }
 

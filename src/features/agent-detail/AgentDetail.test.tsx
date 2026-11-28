@@ -14,12 +14,12 @@ import {
   deriveTimer,
   disabledAgentControls,
   getPermissionResolution,
-  getQueuedSteer,
   isPermissionPending,
   mappedTaskId,
   taskEvents,
   mergeEvents,
 } from "./index";
+import { partitionChatTimeline } from "./timeline";
 
 const sampleTask: PlanTask = {
   id: "task-1",
@@ -121,6 +121,22 @@ const sampleEvents: DbEvent[] = [
     created_at: "2026-11-28T14:19:42Z",
   },
 ];
+test("[ADR-0018.D4] partitions conversation, pending permissions and parent activity", () => {
+  const make = (id: number, kind: string, payload: Record<string, string | boolean>): DbEvent => ({ id, session_id: 42, task_id: null, kind, payload: { plan_task_id: sampleTask.id, ...payload }, created_at: "2026-11-28T14:19:00Z" });
+  const events = [make(1, "user_message", { text: "hello" }), make(2, "agent_message", { text: "hi" }), make(3, "permission_request", { request_id: "pending" }), make(4, "permission_request", { request_id: "done" }), make(5, "permission_resolved", { request_id: "done" }), make(6, "agent_message", { text: "child", parent_tool_call_id: "parent" }), make(7, "tool_call", { tool: "read" }), make(8, "steer_sent", { text: "old" })];
+  const result = partitionChatTimeline(events, sampleTask);
+  expect(result.chatItems.map((event) => event.id)).toEqual([1, 2, 3]);
+  expect(result.activityItems.map((event) => event.id)).toEqual([4, 5, 6, 7, 8]);
+});
+
+test("[ADR-0018.D4] sub-agent messages and thoughts are always activity", () => {
+  const event = (id: number, kind: string): DbEvent => ({ id, session_id: 42, task_id: null, kind, payload: { plan_task_id: sampleTask.id, parent_tool_call_id: "parent", text: "nested" }, created_at: "2026-11-28T14:19:00Z" });
+  const events = [event(1, "agent_message"), event(2, "agent_thought")];
+  const result = partitionChatTimeline(events, sampleTask);
+  expect(result.chatItems).toEqual([]);
+  expect(result.activityItems).toEqual(events);
+});
+
 describe("[ADR-0016.D4] timeline construction", () => {
   test("timeline builds from sample events only (no extras)", () => {
     const emptyTimeline = buildTimeline([], sampleTask);
@@ -245,8 +261,8 @@ describe("[ADR-0016.D4] timeline construction", () => {
 });
 
 describe("[ADR-0016.D4] disabled agent controls", () => {
-  test("every one of Pause, Stop, Take over, Allow, Deny, Steer renders disabled with a visible reason outside attributes when task is not running", () => {
-    const controls = ["Pause", "Stop", "Take over", "Allow", "Deny", "Steer"] as const;
+  test("Pause, Stop, Take over, Allow and Deny show disabled reasons when task is not running", () => {
+    const controls = ["Pause", "Stop", "Take over", "Allow", "Deny"] as const;
 
     for (const control of controls) {
       expect(disabledAgentControls[control]).toBeTruthy();
@@ -277,12 +293,11 @@ describe("[ADR-0016.D4] disabled agent controls", () => {
     expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Take over/);
     expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Allow/);
     expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Deny/);
-    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Steer/);
   });
 });
 
 describe("[ADR-0017.D2] control enablement matrix and permissions", () => {
-  test("Stop is enabled and Steer input is enabled when task is running, while Pause and Take over stay disabled with visible reasons", () => {
+  test("Stop is enabled when task is running, while Pause and Take over stay disabled", () => {
     const runningHtml = renderToStaticMarkup(
       <AgentDetailView
         session={sampleSession}
@@ -303,9 +318,15 @@ describe("[ADR-0017.D2] control enablement matrix and permissions", () => {
     // Stop is NOT disabled
     expect(runningHtml).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Stop/);
 
-    // Steer textarea is NOT disabled
-    expect(runningHtml).toMatch(/<textarea[^>]*placeholder="Steer this agent…"/);
-    expect(runningHtml).not.toMatch(/<textarea[^>]*\sdisabled=""[^>]*placeholder="Steer this agent…"/);
+  });
+
+  test("[ADR-0018.D2] Stop is enabled in review and disabled after completion", () => {
+    for (const status of ["review", "completed", "failed", "cancelled"] as const) {
+      const html = renderToStaticMarkup(<AgentDetailView session={sampleSession} plan={samplePlan} task={{ ...sampleTask, status }} onBack={() => {}} events={[]} />);
+      const stop = html.match(/<button[^>]*aria-label="Stop"[^>]*>/)?.[0];
+      expect(stop).toBeDefined();
+      expect(stop?.includes("disabled=")).toBe(status !== "review");
+    }
   });
 
   test("pending permission derivation correctly tracks resolved requests and running status", () => {
@@ -338,7 +359,7 @@ describe("[ADR-0017.D2] control enablement matrix and permissions", () => {
 
     expect(isPermissionPending(events, "req-1", "running")).toBe(false);
     expect(isPermissionPending(events, "req-2", "running")).toBe(true);
-    expect(isPermissionPending(events, "req-2", "review")).toBe(false);
+    expect(isPermissionPending(events, "req-2", "review")).toBe(true);
     expect(isPermissionPending(events, "req-2", "failed")).toBe(false);
     expect(isPermissionPending(events, "req-2", "cancelled")).toBe(false);
 
@@ -378,9 +399,7 @@ describe("[ADR-0017.D2] control enablement matrix and permissions", () => {
     // Allow and Deny are enabled
     expect(pendingHtml).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Allow/);
     expect(pendingHtml).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Deny/);
-    // View diff stays disabled with visible reason
-    expect(pendingHtml).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*View diff/);
-    expect(pendingHtml.replace(/<[^>]*>/g, " ")).toContain(disabledAgentControls["View diff"]);
+    expect(pendingHtml).not.toContain("View diff");
 
     // Resolved permission
     const resolvedEvents: DbEvent[] = [
@@ -441,7 +460,7 @@ describe("[ADR-0017.D2] control enablement matrix and permissions", () => {
     expect(html).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Allow/);
   });
 
-  test("timeline renders task_state, agent_message, agent_thought, and steer items", () => {
+  test("timeline renders task_state, agent_message and agent_thought; historical steer stays in Activity", () => {
     const richEvents: DbEvent[] = [
       {
         id: 40,
@@ -482,10 +501,8 @@ describe("[ADR-0017.D2] control enablement matrix and permissions", () => {
       "task_state",
       "agent_message",
       "agent_thought",
-      "steer",
     ]);
 
-    expect(getQueuedSteer(richEvents, sampleTask)).toBe("Check rustfmt first");
 
     const html = renderToStaticMarkup(
       <AgentDetailView
@@ -499,9 +516,7 @@ describe("[ADR-0017.D2] control enablement matrix and permissions", () => {
 
     expect(html).toContain("Starting workspace inspection.");
     expect(html).toContain("Considering which files to examine.");
-    expect(html).toContain("Check rustfmt first");
     expect(html).toContain("Thought");
-    expect(html).toContain("Queued");
   });
 });
 
@@ -921,4 +936,19 @@ describe("[ADR-0017.D2] event refresh deduplication, ordering, and cap handling"
     expect(passCalls.length).toBe(2);
     expect(loadedEvents.map((e) => e.id)).toEqual([1, 2]);
   });
+});
+
+test("[ADR-0018.D4] nested pending permissions remain in Activity", () => {
+  const event: DbEvent = { id: 90, session_id: 42, task_id: null, kind: "permission_request", payload: { plan_task_id: sampleTask.id, request_id: "nested", parent_tool_call_id: "parent" }, created_at: "2026-11-28T14:19:00Z" };
+  const { chatItems, activityItems } = partitionChatTimeline([event], sampleTask);
+  expect(chatItems).toEqual([]);
+  expect(activityItems).toEqual([event]);
+});
+
+test("[ADR-0018.D3] an always-allow response resolves its permission request", () => {
+  const request: DbEvent = { id: 91, session_id: 42, task_id: null, kind: "permission_request", payload: { plan_task_id: sampleTask.id, request_id: "always", allow_always: true }, created_at: "2026-11-28T14:19:00Z" };
+  const resolved: DbEvent = { ...request, id: 92, kind: "permission_resolved", payload: { plan_task_id: sampleTask.id, request_id: "always", decision: "allow_always" } };
+  expect(getPermissionResolution([request, resolved], "always")).toBe("allow_always");
+  expect(isPermissionPending([request, resolved], "always", "running")).toBe(false);
+  expect(partitionChatTimeline([request, resolved], sampleTask).activityItems).toEqual([request, resolved]);
 });
