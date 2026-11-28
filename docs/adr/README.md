@@ -20,3 +20,9 @@ This directory documents foundational architectural decisions for BentoBox.
 | [0014](./0014-main-window-launch-geometry.md) | Main Window Launch Geometry | Accepted |
 | [0015](./0015-local-rust-build-footprint.md) | Local Rust Build Footprint | Accepted |
 | [0016](./0016-ui-from-approved-design-frames.md) | Build the UI from the Approved Design Frames | Accepted |
+| [0017](./0017-acp-agent-execution.md) | Run Agents over ACP | Accepted |
+| [0018](./0018-chat-first-agent-sessions.md) | Chat-First Agent Sessions with a Dynamic Permission Policy | Accepted |
+| [0019](./0019-native-folder-picker-and-non-git-projects.md) | Native Folder Picker for Adding a Project, and Non-Git Projects | Accepted |
+| [0020](./0020-plain-chat-prompt-and-concise-replies.md) | Plain Chat Prompt and Concise Replies | Accepted |
+| [0021](./0021-per-session-model-selection.md) | Per-Session Model Selection | Accepted |
+| [0022](./0022-composer-effort-routing-and-open-ui-gaps.md) | Composer Effort Routing and Open UI Gaps | Proposed |
