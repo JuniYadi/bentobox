@@ -31,6 +31,8 @@ export interface CapabilityDescriptor {
 export interface DetectedHarness {
   capabilities: CapabilityDescriptor;
   executable_path: string;
+  runnable: boolean;
+  launch_note: string | null;
 }
 
 /** @adr ADR-0001.D1 */

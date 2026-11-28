@@ -22,6 +22,17 @@ fn legacy_plan_without_files_deserializes() {
 }
 
 #[test]
+fn direct_harness_plan_does_not_require_a_team() {
+    // [ADR-0010.D1] A composer plan can target a harness without a team.
+    let (store, root) = store();
+    let session = store.create_session("active").unwrap();
+    let mut direct = task("direct", &[]);
+    direct.team.clear();
+    assert_eq!(propose(&store, session, vec![direct]).unwrap().tasks[0].team, "");
+    cleanup(&root);
+}
+
+#[test]
 fn approval_gate_and_revision_reset_persist() {
     // [ADR-0010.D1] Unapproved tasks cannot run; revisions invalidate approval across persistence.
     let (store, root) = store();
@@ -201,5 +212,23 @@ fn reject_and_invalid_phase_transitions() {
     assert_eq!(revised.revision, 2);
     approve(&store, session, 2).unwrap();
     assert!(reject(&store, session).is_err());
+    cleanup(&root);
+}
+
+#[test]
+fn completed_transition_succeeds_even_when_runner_start_fails() {
+    // [ADR-0010.D1] A start failure after completion must not fail the transition command.
+    let (store, root) = store();
+    let session = store.create_session("active").unwrap();
+    let t = task("task-1", &[]);
+    propose(&store, session, vec![t]).unwrap();
+    approve(&store, session, 1).unwrap();
+    transition(&store, session, "task-1", "running").unwrap();
+    transition(&store, session, "task-1", "review").unwrap();
+    let runner = crate::runner::Runner::with_emitter(store.clone(), std::sync::Arc::new(|_, _| {}));
+    let res = tauri::async_runtime::block_on(session_task_transition_with(store, &runner, session, "task-1".into(), "completed".into()));
+    assert!(res.is_ok());
+    let plan = res.unwrap();
+    assert_eq!(plan.tasks[0].status, "completed");
     cleanup(&root);
 }

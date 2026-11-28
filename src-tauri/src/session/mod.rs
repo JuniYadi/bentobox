@@ -89,8 +89,8 @@ fn mutate_plan(store: &Store, session_id: i64, mutate: impl FnOnce(&mut Plan) ->
 /// @adr ADR-0010.D1
 pub fn propose(store: &Store, session_id: i64, tasks: Vec<PlanTask>) -> Result<Plan, String> {
     if tasks.is_empty() { return Err("plan must contain at least one task".into()); }
-    if tasks.iter().any(|task| task.id.is_empty() || task.title.is_empty() || task.team.is_empty() || task.harness.is_empty()) {
-        return Err("task id, title, team, and harness are required".into());
+    if tasks.iter().any(|task| task.id.is_empty() || task.title.is_empty() || task.harness.is_empty()) {
+        return Err("task id, title, and harness are required".into());
     }
     let ids: std::collections::HashSet<_> = tasks.iter().map(|task| task.id.as_str()).collect();
     if ids.len() != tasks.len() || tasks.iter().any(|task| task.dependencies.iter().any(|dependency| !ids.contains(dependency.as_str()) || dependency == &task.id)) {
@@ -140,7 +140,17 @@ pub fn reject(store: &Store, session_id: i64) -> Result<Plan, String> {
 
 /// @adr ADR-0010.D1
 pub fn transition(store: &Store, session_id: i64, task_id: &str, next: &str) -> Result<Plan, String> {
+    transition_checked(store, session_id, task_id, next, None)
+}
+
+/// @adr ADR-0010.D1
+pub(crate) fn transition_at_revision(store: &Store, session_id: i64, task_id: &str, next: &str, expected_revision: u64) -> Result<Plan, String> {
+    transition_checked(store, session_id, task_id, next, Some(expected_revision))
+}
+
+fn transition_checked(store: &Store, session_id: i64, task_id: &str, next: &str, expected_revision: Option<u64>) -> Result<Plan, String> {
     mutate_plan(store, session_id, |plan| {
+        if expected_revision.is_some_and(|revision| plan.revision != revision) { return Err("plan revision mismatch".into()); }
         let index = plan.tasks.iter().position(|task| task.id == task_id).ok_or_else(|| "unknown task".to_string())?;
         let current = plan.tasks[index].status.as_str();
         let valid = matches!((current, next), ("queued", "running") | ("running", "review") | ("review", "completed") | ("running", "failed") | ("review", "failed") | ("failed", "queued") | ("queued", "cancelled") | ("running", "cancelled") | ("review", "cancelled"));
@@ -205,10 +215,21 @@ pub async fn session_reject_plan(store: State<'_, Store>, session_id: i64) -> Re
     tauri::async_runtime::spawn_blocking(move || reject(&store, session_id)).await.map_err(|e| e.to_string())?
 }
 /// @adr ADR-0010.D1
+pub async fn session_task_transition_with(store: Store, runner: &crate::runner::Runner, session_id: i64, task_id: String, next: String) -> Result<Plan, String> {
+    let completed = next == "completed";
+    let plan = tauri::async_runtime::spawn_blocking(move || transition(&store, session_id, &task_id, &next)).await.map_err(|e| e.to_string())??;
+    if completed {
+        if let Err(error) = runner.start(session_id) {
+            eprintln!("Failed to auto-start session {session_id} after completion: {error}");
+        }
+    }
+    Ok(plan)
+}
+
+/// @adr ADR-0010.D1
 #[tauri::command]
-pub async fn session_task_transition(store: State<'_, Store>, session_id: i64, task_id: String, next: String) -> Result<Plan, String> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || transition(&store, session_id, &task_id, &next)).await.map_err(|e| e.to_string())?
+pub async fn session_task_transition(store: State<'_, Store>, runner: State<'_, crate::runner::Runner>, session_id: i64, task_id: String, next: String) -> Result<Plan, String> {
+    session_task_transition_with(store.inner().clone(), runner.inner(), session_id, task_id, next).await
 }
 
 /// @adr ADR-0010.D1
@@ -220,9 +241,9 @@ pub async fn session_get_plan(store: State<'_, Store>, session_id: i64) -> Resul
 
 /// @adr ADR-0010.D1
 #[tauri::command]
-pub async fn session_cancel_plan(store: State<'_, Store>, session_id: i64) -> Result<Plan, String> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || cancel(&store, session_id)).await.map_err(|e| e.to_string())?
+pub async fn session_cancel_plan(runner: State<'_, crate::runner::Runner>, session_id: i64) -> Result<Plan, String> {
+    let runner = runner.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || runner.cancel_session(session_id)).await.map_err(|e| e.to_string())?
 }
 
 /// @adr ADR-0010.D1

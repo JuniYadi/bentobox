@@ -4,7 +4,7 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Textarea } from "./components/ui/textarea";
 import { Switch } from "./components/ui/switch";
-import { DropdownMenu, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarProvider } from "./components/ui/sidebar";
 import { geometry, regionWidthCss, regionWidths, storedFraction } from "./components/layout/geometry";
@@ -13,10 +13,13 @@ import { ProjectTree } from "./components/layout/ProjectTree";
 import { RightPanel } from "./components/layout/RightPanel";
 import { StatusBar } from "./components/layout/StatusBar";
 import { projectAdd, projectTree, projectUnassignedSessions, type Project, type ProjectSession } from "./features/project/api";
-import { approvePlan, createSession, getPlan, listSessions, setSessionWorktree } from "./features/session/api";
-import { ORCHESTRATOR_UNAVAILABLE_REASON, PLAN_COMPOSER_PLACEHOLDER, PlanCard, showsPlanCard } from "./features/session/PlanCard";
+import { approvePlan, createSession, getPlan, listSessions, proposePlan, setSessionWorktree } from "./features/session/api";
+import { PLAN_COMPOSER_PLACEHOLDER, PlanCard, showsPlanCard } from "./features/session/PlanCard";
+import { buildOneTaskPlan, getComposerHarnessOptions, sendState } from "./features/session/composer";
 import { AgentDetailView, AgentRightPanel, SubAgentCard } from "./features/agent-detail";
-import { loadSessionEvents } from "./features/agent-detail/timeline";
+import { fetchIncrementalEvents, loadSessionEvents } from "./features/agent-detail/timeline";
+import { listDetectedHarnesses, type DetectedHarness } from "./features/agent/api";
+import { onRunnerEvent, runnerStart } from "./features/runner/api";
 import type { DbEvent } from "../src-tauri/src/db/api";
 import { SettingsView } from "./features/settings/SettingsView";
 import type { Plan, Session } from "./features/session/types";
@@ -55,8 +58,16 @@ export default function App() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [events, setEvents] = useState<DbEvent[] | null>(null);
   const [eventsError, setEventsError] = useState<string | null>(null);
+  const [eventsTruncated, setEventsTruncated] = useState(false);
   const [approvingSessionId, setApprovingSessionId] = useState<number | null>(null);
+  const [detectedHarnesses, setDetectedHarnesses] = useState<DetectedHarness[]>([]);
+  const [selectedHarness, setSelectedHarness] = useState<string | null>(null);
   const planGeneration = useRef(0);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+  const eventsGeneration = useRef(0);
   const [filter, setFilter] = useState("");
   const [adding, setAdding] = useState(false);
   const [projectPath, setProjectPath] = useState("");
@@ -100,6 +111,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    listDetectedHarnesses().then((harnesses) => {
+      if (cancelled) return;
+      setDetectedHarnesses(harnesses);
+      setSelectedHarness((current) => {
+        if (current) return current;
+        const runnableAcp = harnesses.find((h) => h.capabilities.transport.toLowerCase() === "acp" && h.runnable);
+        return runnableAcp?.capabilities.harness_id ?? null;
+      });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     const generation = ++planGeneration.current;
     setPlan(null);
     if (activeSessionId !== null) {
@@ -116,14 +141,100 @@ export default function App() {
     if (view.kind !== "agent" || activeSessionId === null) return;
     let cancelled = false;
     setEvents(null);
+    const generation = ++eventsGeneration.current;
     setEventsError(null);
+    setEventsTruncated(false);
     void loadSessionEvents(activeSessionId).then((value) => {
-      if (!cancelled) setEvents(value);
+      if (!cancelled && eventsGeneration.current === generation) {
+        setEvents(value);
+        setEventsTruncated(false);
+      }
     }).catch((reason) => {
-      if (!cancelled) setEventsError(`Could not load events: ${String(reason)}`);
+      if (!cancelled && eventsGeneration.current === generation) {
+        setEventsError(`Could not load events: ${String(reason)}`);
+      }
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      eventsGeneration.current++;
+    };
   }, [activeSessionId, view.kind]);
+
+  useEffect(() => {
+    if (activeSessionId === null) return;
+    const sessionId = activeSessionId;
+    let debounceTimer: number | null = null;
+    let unlisten: (() => void) | null = null;
+    let isSubscribed = true;
+
+    let isFetching = false;
+    let pendingFetch = false;
+
+    const runFetch = async () => {
+      if (isFetching) {
+        pendingFetch = true;
+        return;
+      }
+      isFetching = true;
+      const generation = eventsGeneration.current;
+
+      try {
+        try {
+          const updatedPlan = await getPlan(sessionId);
+          if (isSubscribed && eventsGeneration.current === generation) {
+            setPlan(updatedPlan);
+          }
+        } catch {
+          // Retain current plan on transient error
+        }
+
+        if (viewRef.current.kind === "agent") {
+          try {
+            const current = eventsRef.current ?? [];
+            const result = await fetchIncrementalEvents(sessionId, current);
+            if (isSubscribed && eventsGeneration.current === generation) {
+              setEvents((latest) => {
+                if (eventsGeneration.current !== generation) return latest;
+                return result.events;
+              });
+              setEventsTruncated(result.truncated);
+              setEventsError(null);
+            }
+          } catch (err) {
+            if (isSubscribed && eventsGeneration.current === generation) {
+              setEventsError(String(err instanceof Error ? err.message : err));
+            }
+          }
+        }
+      } finally {
+        isFetching = false;
+        if (pendingFetch && isSubscribed) {
+          pendingFetch = false;
+          void runFetch();
+        }
+      }
+    };
+
+    onRunnerEvent((payload) => {
+      if (payload.sessionId !== sessionId) return;
+      clearTimeout(debounceTimer ?? undefined);
+      debounceTimer = window.setTimeout(() => {
+        void runFetch();
+      }, 250);
+    }).then((cleanup) => {
+      if (!isSubscribed) {
+        cleanup();
+      } else {
+        unlisten = cleanup;
+      }
+    }).catch(() => {});
+
+    return () => {
+      isSubscribed = false;
+      clearTimeout(debounceTimer ?? undefined);
+      if (unlisten) unlisten();
+    };
+  }, [activeSessionId]);
 
   useEffect(() => {
     const resize = () => setWindowWidth(window.innerWidth);
@@ -179,6 +290,13 @@ export default function App() {
     setApprovingSessionId(sessionId);
     try {
       await approvePlan(sessionId, revision);
+      try {
+        await runnerStart(sessionId);
+      } catch (runnerErr) {
+        if (planGeneration.current === generation) {
+          setError(`Could not start runner: ${String(runnerErr)}`);
+        }
+      }
       const updated = await getPlan(sessionId);
       if (planGeneration.current === generation) { setPlan(updated); setError(null); }
     } catch (reason) {
@@ -195,6 +313,22 @@ export default function App() {
       setApprovingSessionId(null);
     }
   }
+  async function handleSend() {
+    if (!activeSession || !selectedHarness || !prompt.trim()) return;
+    const state = sendState({ text: prompt, harness: selectedHarness, plan: activePlan });
+    if (!state.enabled) return;
+    try {
+      const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const tasks = buildOneTaskPlan(prompt, selectedHarness, activeSession.optInWorktree, suffix);
+      const newPlan = await proposePlan(activeSession.id, tasks);
+      setPlan(newPlan);
+      setPrompt("");
+      setError(null);
+    } catch (reason) {
+      setError(`Could not propose plan: ${String(reason)}`);
+    }
+  }
+
 
   return (
     <TooltipProvider>
@@ -206,7 +340,7 @@ export default function App() {
             <SidebarFooter className="border-t p-2">{!leftCollapsed && <Button variant="ghost" className="justify-start" onClick={() => setView({ kind: "settings" })}><Settings2 /><span>Settings ⌘,</span></Button>}<Button variant="ghost" className="justify-start" onClick={() => { const value = !leftCollapsed; setLeftCollapsed(value); localStorage.setItem(storage.leftCollapsed, String(value)); }}><PanelRight />{!leftCollapsed && <span>Collapse ⌘B</span>}</Button></SidebarFooter>
           </Sidebar>
           {!leftCollapsed && <div role="separator" aria-label="Resize project sidebar" aria-orientation="vertical" aria-valuenow={Math.round(widths.left / windowWidth * 100)} aria-valuemin={Math.round(geometry.left.min / windowWidth * 100)} aria-valuemax={Math.round(geometry.left.max / windowWidth * 100)} tabIndex={0} className="w-1 shrink-0 cursor-col-resize hover:bg-ring focus-visible:bg-ring" onDoubleClick={() => { localStorage.removeItem(storage.left); setLeftFraction(null); }} onKeyDown={(event) => resizeKey(event, "left", leftFraction)} onPointerDown={(event) => beginResize(event, "left")} />}
-          <main data-region="content" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">{view.kind === "settings" ? <SettingsView onClose={() => setView({ kind: "main" })} /> : view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentDetailView session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} onBack={() => setView({ kind: "main" })} /> : <><TopBar session={activeSession} plan={activePlan} project={projects.find((item) => (tree[item.id] ?? []).some((entry) => entry.id === activeSessionId))} collapsed={effectiveRightCollapsed} onToggle={() => { const next = !rightCollapsed; setRightCollapsed(next); localStorage.setItem(storage.rightCollapsed, String(next)); }} /><Chat session={activeSession} plan={activePlan} busy={approvingSessionId === activeSessionId && activeSessionId !== null} onApprove={(revision) => void approveCurrentPlan(revision)} onOpenAgent={(taskId) => { setEvents(null); setEventsError(null); setView({ kind: "agent", taskId }); }} prompt={prompt} onPromptChange={setPrompt} onToggleWorktree={toggleWorktree} onCreateSession={() => { const project = projects.find((item) => item.id === activeSessionProjectId) ?? projects[0]; if (project) void createNewSession(project); }} error={error} loading={loading} /></>}</main>
+          <main data-region="content" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">{view.kind === "settings" ? <SettingsView onClose={() => setView({ kind: "main" })} /> : view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentDetailView session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} eventsTruncated={eventsTruncated} onBack={() => setView({ kind: "main" })} /> : <><TopBar session={activeSession} plan={activePlan} project={projects.find((item) => (tree[item.id] ?? []).some((entry) => entry.id === activeSessionId))} collapsed={effectiveRightCollapsed} onToggle={() => { const next = !rightCollapsed; setRightCollapsed(next); localStorage.setItem(storage.rightCollapsed, String(next)); }} /><Chat session={activeSession} plan={activePlan} busy={approvingSessionId === activeSessionId && activeSessionId !== null} onApprove={(revision) => void approveCurrentPlan(revision)} onOpenAgent={(taskId) => { setEvents(null); setEventsError(null); setEventsTruncated(false); setView({ kind: "agent", taskId }); }} prompt={prompt} onPromptChange={setPrompt} onToggleWorktree={toggleWorktree} onCreateSession={() => { const project = projects.find((item) => item.id === activeSessionProjectId) ?? projects[0]; if (project) void createNewSession(project); }} error={error} loading={loading} harnesses={detectedHarnesses} selectedHarness={selectedHarness} onSelectHarness={setSelectedHarness} onSend={() => void handleSend()} /></>}</main>
           {view.kind !== "settings" && !effectiveRightCollapsed && <><div role="separator" aria-label="Resize contextual panel" aria-orientation="vertical" aria-valuenow={Math.round(widths.right / windowWidth * 100)} aria-valuemin={Math.round(geometry.right.min / windowWidth * 100)} aria-valuemax={Math.round(geometry.right.max / windowWidth * 100)} tabIndex={0} className="w-1 shrink-0 cursor-col-resize hover:bg-ring focus-visible:bg-ring" onDoubleClick={() => { localStorage.removeItem(storage.right); setRightFraction(null); }} onKeyDown={(event) => resizeKey(event, "right", rightFraction)} onPointerDown={(event) => beginResize(event, "right")} />
           <div data-region="right" className="h-full min-h-0 shrink-0 overflow-hidden w-(--right-width)" style={{ "--right-width": regionWidthCss("right", rightFraction) } as React.CSSProperties}>{view.kind === "agent" && activeSession && activePlan && activeTask ? <AgentRightPanel session={activeSession} plan={activePlan} task={activeTask} events={events} eventsError={eventsError} /> : <RightPanel onUseAsPrompt={setPrompt} />}</div></>}
         </SidebarProvider>
@@ -251,7 +385,51 @@ export function TopBar({ session, plan, project, collapsed, onToggle }: { sessio
 }
 
 /** @adr ADR-0016.D2 */
-export function Chat({ session, plan, busy, onApprove, onOpenAgent, prompt, onPromptChange, onToggleWorktree, onCreateSession, error, loading }: { session: Session | null; plan: Plan | null; busy: boolean; onApprove: (revision: number) => void; onOpenAgent: (taskId: string) => void; prompt: string; onPromptChange: (value: string) => void; onToggleWorktree: () => void; onCreateSession: () => void; error: string | null; loading: boolean }) {
+export interface ChatProps {
+  session: Session | null;
+  plan: Plan | null;
+  busy: boolean;
+  onApprove: (revision: number) => void;
+  onOpenAgent: (taskId: string) => void;
+  prompt: string;
+  onPromptChange: (value: string) => void;
+  onToggleWorktree: () => void;
+  onCreateSession: () => void;
+  error: string | null;
+  loading: boolean;
+  harnesses?: DetectedHarness[];
+  selectedHarness?: string | null;
+  onSelectHarness?: (harnessId: string) => void;
+  onSend?: () => void;
+}
+
+/** @adr ADR-0016.D2 */
+export function Chat({
+  session,
+  plan,
+  busy,
+  onApprove,
+  onOpenAgent,
+  prompt,
+  onPromptChange,
+  onToggleWorktree,
+  onCreateSession,
+  error,
+  loading,
+  harnesses = [],
+  selectedHarness = null,
+  onSelectHarness,
+  onSend,
+}: ChatProps) {
+  const harnessOptions = getComposerHarnessOptions(harnesses);
+  const chosenOption = harnessOptions.find((opt) => opt.harnessId === selectedHarness);
+  const currentSendState = sendState({
+    text: prompt,
+    harness: selectedHarness,
+    plan,
+  });
+  const sendDisabled = !currentSendState.enabled || !session;
+
   return <>
     <section className="min-h-0 flex-1 overflow-auto">
       <div className="mx-auto flex w-full flex-col gap-5 px-6 py-8 max-w-(--chat-max-width)" style={{ "--chat-max-width": "calc(720 * var(--fw))" } as React.CSSProperties}>
@@ -264,13 +442,49 @@ export function Chat({ session, plan, busy, onApprove, onOpenAgent, prompt, onPr
       </div>
     </section>
     <div className="mx-auto w-full px-6 pb-5 max-w-(--chat-max-width)" style={{ "--chat-max-width": "calc(720 * var(--fw))" } as React.CSSProperties}>
-      <form onSubmit={(event) => event.preventDefault()} className="rounded-lg border bg-background focus-within:ring-1 focus-within:ring-ring">
+      <form onSubmit={(event) => { event.preventDefault(); if (!sendDisabled && onSend) onSend(); }} className="rounded-lg border bg-background focus-within:ring-1 focus-within:ring-ring">
         <Textarea aria-label="Prompt" value={prompt} onChange={(event) => onPromptChange(event.target.value)} placeholder={showsPlanCard(plan) ? PLAN_COMPOSER_PLACEHOLDER : "Describe the goal…"} className="min-h-16 resize-none border-0 shadow-none focus-visible:ring-0" />
-        <p id="orchestrator-unavailable" className="px-3 text-xs text-muted-foreground">{ORCHESTRATOR_UNAVAILABLE_REASON}</p>
+        {currentSendState.reason && (
+          <p id="send-disabled-reason" className="px-3 text-xs text-muted-foreground">{currentSendState.reason}</p>
+        )}
         <div className="flex items-center gap-3 p-2">
-          <Tooltip><TooltipTrigger asChild><span><DropdownMenu><DropdownMenuTrigger asChild disabled><Button type="button" variant="outline" disabled>Team / harness <ChevronDown /></Button></DropdownMenuTrigger></DropdownMenu></span></TooltipTrigger><TooltipContent>Teams arrive with ADR-0011</TooltipContent></Tooltip>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="outline" className="text-xs">
+                <span>{chosenOption ? chosenOption.displayName : "Select harness"}</span>
+                <ChevronDown className="ml-1 size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64 p-1">
+              {harnessOptions.length === 0 ? (
+                <div className="p-2 text-xs text-muted-foreground">No ACP harnesses detected</div>
+              ) : (
+                harnessOptions.map((opt) => (
+                  <DropdownMenuItem
+                    key={opt.harnessId}
+                    disabled={!opt.runnable}
+                    onClick={() => {
+                      if (opt.runnable && onSelectHarness) onSelectHarness(opt.harnessId);
+                    }}
+                    className="flex flex-col items-start gap-0.5 p-2 text-xs cursor-pointer"
+                  >
+                    <div className="flex w-full items-center justify-between font-medium">
+                      <span>{opt.displayName}</span>
+                      {opt.harnessId === selectedHarness && <span className="text-xs text-primary">✓</span>}
+                    </div>
+                    {opt.launchNote && (
+                      <span className="text-xs text-muted-foreground">{opt.launchNote}</span>
+                    )}
+                    {!opt.runnable && opt.disabledReason && !opt.launchNote && (
+                      <span className="text-xs text-muted-foreground">{opt.disabledReason}</span>
+                    )}
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={session?.optInWorktree ?? false} onCheckedChange={onToggleWorktree} disabled={!session} />Worktree</label>
-          <Button type="submit" disabled aria-describedby="orchestrator-unavailable" className="ml-auto"><span>Send</span></Button>
+          <Button type="submit" disabled={sendDisabled} aria-describedby={currentSendState.reason ? "send-disabled-reason" : undefined} className="ml-auto"><span>Send</span></Button>
         </div>
       </form>
     </div>

@@ -25,7 +25,7 @@ describe("[ADR-0016.D2] session composer", () => {
     const html = renderToStaticMarkup(<TooltipProvider><Chat session={null} plan={null} busy={false} onApprove={() => {}} onOpenAgent={() => {}} onToggleWorktree={() => {}} onCreateSession={() => {}} prompt="Investigate issue #42" onPromptChange={() => {}} error={null} loading={false} /></TooltipProvider>);
     expect(html).toContain("Investigate issue #42");
     expect(html).toContain("disabled");
-    expect(html).toContain("Orchestrator execution isn&#x27;t available yet");
+    expect(html).toContain("Select an ACP harness to run this goal.");
   });
 
   test("does not highlight a phase when there is no plan", () => {

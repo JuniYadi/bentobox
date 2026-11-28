@@ -13,8 +13,12 @@ import {
   deriveDiffStats,
   deriveTimer,
   disabledAgentControls,
+  getPermissionResolution,
+  getQueuedSteer,
+  isPermissionPending,
   mappedTaskId,
   taskEvents,
+  mergeEvents,
 } from "./index";
 
 const sampleTask: PlanTask = {
@@ -241,7 +245,7 @@ describe("[ADR-0016.D4] timeline construction", () => {
 });
 
 describe("[ADR-0016.D4] disabled agent controls", () => {
-  test("every one of Pause, Stop, Take over, Allow, Deny, Steer renders disabled with a visible reason outside attributes", () => {
+  test("every one of Pause, Stop, Take over, Allow, Deny, Steer renders disabled with a visible reason outside attributes when task is not running", () => {
     const controls = ["Pause", "Stop", "Take over", "Allow", "Deny", "Steer"] as const;
 
     for (const control of controls) {
@@ -249,11 +253,12 @@ describe("[ADR-0016.D4] disabled agent controls", () => {
       expect(disabledAgentControls[control].length).toBeGreaterThan(0);
     }
 
+    const completedTask: PlanTask = { ...sampleTask, status: "completed" };
     const html = renderToStaticMarkup(
       <AgentDetailView
         session={sampleSession}
         plan={samplePlan}
-        task={sampleTask}
+        task={completedTask}
         onBack={() => {}}
         events={sampleEvents}
       />
@@ -267,12 +272,236 @@ describe("[ADR-0016.D4] disabled agent controls", () => {
     }
 
     // Buttons are disabled
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>[^<]*Pause/);
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>[^<]*Stop/);
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>[^<]*Take over/);
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>[^<]*Allow/);
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>[^<]*Deny/);
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>[^<]*Steer/);
+    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Pause/);
+    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Stop/);
+    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Take over/);
+    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Allow/);
+    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Deny/);
+    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Steer/);
+  });
+});
+
+describe("[ADR-0017.D2] control enablement matrix and permissions", () => {
+  test("Stop is enabled and Steer input is enabled when task is running, while Pause and Take over stay disabled with visible reasons", () => {
+    const runningHtml = renderToStaticMarkup(
+      <AgentDetailView
+        session={sampleSession}
+        plan={samplePlan}
+        task={sampleTask}
+        onBack={() => {}}
+        events={sampleEvents}
+      />
+    );
+
+    // Pause and Take over remain disabled with visible reasons
+    const textOnly = runningHtml.replace(/<[^>]*>/g, " ");
+    expect(textOnly).toContain(disabledAgentControls.Pause);
+    expect(textOnly).toContain(disabledAgentControls["Take over"]);
+    expect(runningHtml).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Pause/);
+    expect(runningHtml).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Take over/);
+
+    // Stop is NOT disabled
+    expect(runningHtml).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Stop/);
+
+    // Steer textarea is NOT disabled
+    expect(runningHtml).toMatch(/<textarea[^>]*placeholder="Steer this agent…"/);
+    expect(runningHtml).not.toMatch(/<textarea[^>]*\sdisabled=""[^>]*placeholder="Steer this agent…"/);
+  });
+
+  test("pending permission derivation correctly tracks resolved requests and running status", () => {
+    const events: DbEvent[] = [
+      {
+        id: 10,
+        session_id: 42,
+        task_id: null,
+        kind: "permission_request",
+        payload: { plan_task_id: "task-1", request_id: "req-1", operation: "edit_file" },
+        created_at: "2026-11-28T14:19:00Z",
+      },
+      {
+        id: 11,
+        session_id: 42,
+        task_id: null,
+        kind: "permission_request",
+        payload: { plan_task_id: "task-1", request_id: "req-2", operation: "run_shell" },
+        created_at: "2026-11-28T14:19:10Z",
+      },
+      {
+        id: 12,
+        session_id: 42,
+        task_id: null,
+        kind: "permission_resolved",
+        payload: { plan_task_id: "task-1", request_id: "req-1", decision: "allow" },
+        created_at: "2026-11-28T14:19:20Z",
+      },
+    ];
+
+    expect(isPermissionPending(events, "req-1", "running")).toBe(false);
+    expect(isPermissionPending(events, "req-2", "running")).toBe(true);
+    expect(isPermissionPending(events, "req-2", "review")).toBe(false);
+    expect(isPermissionPending(events, "req-2", "failed")).toBe(false);
+    expect(isPermissionPending(events, "req-2", "cancelled")).toBe(false);
+
+    expect(getPermissionResolution(events, "req-1")).toBe("allow");
+    expect(getPermissionResolution(events, "req-2")).toBeNull();
+  });
+
+  test("Allow and Deny are enabled for pending permissions, and resolved permissions render resolution badge", () => {
+    const pendingEvents: DbEvent[] = [
+      {
+        id: 30,
+        session_id: 42,
+        task_id: null,
+        kind: "permission_request",
+        payload: {
+          plan_task_id: "task-1",
+          request_id: "perm-active",
+          operation: "write_file",
+          target: "src/main.rs",
+          can_allow: true,
+          can_deny: true,
+        },
+        created_at: "2026-11-28T14:19:00Z",
+      },
+    ];
+
+    const pendingHtml = renderToStaticMarkup(
+      <AgentDetailView
+        session={sampleSession}
+        plan={samplePlan}
+        task={sampleTask}
+        onBack={() => {}}
+        events={pendingEvents}
+      />
+    );
+
+    // Allow and Deny are enabled
+    expect(pendingHtml).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Allow/);
+    expect(pendingHtml).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Deny/);
+    // View diff stays disabled with visible reason
+    expect(pendingHtml).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*View diff/);
+    expect(pendingHtml.replace(/<[^>]*>/g, " ")).toContain(disabledAgentControls["View diff"]);
+
+    // Resolved permission
+    const resolvedEvents: DbEvent[] = [
+      ...pendingEvents,
+      {
+        id: 31,
+        session_id: 42,
+        task_id: null,
+        kind: "permission_resolved",
+        payload: { plan_task_id: "task-1", request_id: "perm-active", decision: "allow" },
+        created_at: "2026-11-28T14:19:10Z",
+      },
+    ];
+
+    const resolvedHtml = renderToStaticMarkup(
+      <AgentDetailView
+        session={sampleSession}
+        plan={samplePlan}
+        task={sampleTask}
+        onBack={() => {}}
+        events={resolvedEvents}
+      />
+    );
+    expect(resolvedHtml).toContain("PERMISSION RESOLVED");
+    expect(resolvedHtml).toContain("allow");
+  });
+
+  test("disabled reason shows visibly when can_allow or can_deny is false", () => {
+    const restrictedEvents: DbEvent[] = [
+      {
+        id: 32,
+        session_id: 42,
+        task_id: null,
+        kind: "permission_request",
+        payload: {
+          plan_task_id: "task-1",
+          request_id: "perm-no-deny",
+          operation: "critical_write",
+          can_allow: true,
+          can_deny: false,
+        },
+        created_at: "2026-11-28T14:19:00Z",
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <AgentDetailView
+        session={sampleSession}
+        plan={samplePlan}
+        task={sampleTask}
+        onBack={() => {}}
+        events={restrictedEvents}
+      />
+    );
+
+    expect(html.replace(/<[^>]*>/g, " ")).toContain("Agent did not offer a deny option.");
+    expect(html).toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Deny/);
+    expect(html).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>[^<]*Allow/);
+  });
+
+  test("timeline renders task_state, agent_message, agent_thought, and steer items", () => {
+    const richEvents: DbEvent[] = [
+      {
+        id: 40,
+        session_id: 42,
+        task_id: null,
+        kind: "task_state",
+        payload: { plan_task_id: "task-1", status: "running" },
+        created_at: "2026-11-28T14:19:00Z",
+      },
+      {
+        id: 41,
+        session_id: 42,
+        task_id: null,
+        kind: "agent_message",
+        payload: { plan_task_id: "task-1", text: "Starting workspace inspection." },
+        created_at: "2026-11-28T14:19:02Z",
+      },
+      {
+        id: 42,
+        session_id: 42,
+        task_id: null,
+        kind: "agent_thought",
+        payload: { plan_task_id: "task-1", text: "Considering which files to examine." },
+        created_at: "2026-11-28T14:19:03Z",
+      },
+      {
+        id: 43,
+        session_id: 42,
+        task_id: null,
+        kind: "steer_queued",
+        payload: { plan_task_id: "task-1", text: "Check rustfmt first" },
+        created_at: "2026-11-28T14:19:05Z",
+      },
+    ];
+
+    const timeline = buildTimeline(richEvents, sampleTask);
+    expect(timeline.map((item) => item.type)).toEqual([
+      "task_state",
+      "agent_message",
+      "agent_thought",
+      "steer",
+    ]);
+
+    expect(getQueuedSteer(richEvents, sampleTask)).toBe("Check rustfmt first");
+
+    const html = renderToStaticMarkup(
+      <AgentDetailView
+        session={sampleSession}
+        plan={samplePlan}
+        task={sampleTask}
+        onBack={() => {}}
+        events={richEvents}
+      />
+    );
+
+    expect(html).toContain("Starting workspace inspection.");
+    expect(html).toContain("Considering which files to examine.");
+    expect(html).toContain("Check rustfmt first");
+    expect(html).toContain("Thought");
+    expect(html).toContain("Queued");
   });
 });
 
@@ -344,7 +573,7 @@ describe("[ADR-0016.D4] agent detail navigation and presentation", () => {
     expect(withoutBranch).not.toContain(`task/${sampleTask.id}`);
   });
 
-  test("renders orchestrator handoff following ADR-0007 shape with line ranges and arrays", () => {
+  test("renders handoff following ADR-0007 shape with line ranges and arrays", () => {
     const handoffEvent: DbEvent = {
       id: 50,
       session_id: 42,
@@ -382,6 +611,8 @@ describe("[ADR-0016.D4] agent detail navigation and presentation", () => {
     expect(html).toContain("src/tokens.ts");
     expect(html).toContain("Zero allocation in hot loop");
     expect(html).toContain("bun test src/parser.test.ts");
+    expect(html).toContain("Handoff");
+    expect(html).not.toContain("Orchestrator handoff");
     expect(html).not.toContain("[object Object]");
   });
 
@@ -400,6 +631,21 @@ describe("[ADR-0016.D4] agent detail navigation and presentation", () => {
     expect(html).toContain("+84 −1");
     expect(html).toContain("(0:42)");
     expect(html).not.toMatch(/#[\da-f]{3,8}\b/i);
+  });
+
+  test("renders non-blocking notice when eventsTruncated is true", () => {
+    const html = renderToStaticMarkup(
+      <AgentDetailView
+        session={sampleSession}
+        plan={samplePlan}
+        task={sampleTask}
+        onBack={() => {}}
+        events={sampleEvents}
+        eventsTruncated={true}
+      />
+    );
+    expect(html).toContain("Showing the first 5,000 events");
+    expect(html).toContain("Agent activity");
   });
 });
 
@@ -523,6 +769,8 @@ describe("[ADR-0016.D4] AgentRightPanel tabs", () => {
 describe("[ADR-0016.D4] design constraints source scan", () => {
   const pixelWidth = /(?:width\s*:\s*[^,;}]*\b\d+(?:\.\d+)?px|(?:min-|max-)?w-\[[^\]]*\b\d+(?:\.\d+)?px[^\]]*\]|\[(?:width|min-width|max-width):[^\]]*\b\d+(?:\.\d+)?px[^\]]*\])/;
   const statusColorOnText = /\btext-(?:warning|success|destructive|danger)\b/;
+  const statusColorBorder = /\bborder-(?:warning|success|destructive|danger)(?:\/\d+)?\b/;
+  const statusColorFillOnText = /<[A-Za-z0-9_.-]+[^>]*\bclassName="[^"]*\bbg-(?:warning|success|destructive|danger)(?:\/\d+)?\b[^"]*"[^>]*>[^<]*[A-Za-z0-9]/;
   const monoAllowList = [
     /branchName/i,
     /GitBranch/i,
@@ -563,6 +811,12 @@ describe("[ADR-0016.D4] design constraints source scan", () => {
       // D1 rule: No status color directly on text spans/elements (use neutral text + dot/icon)
       expect(source).not.toMatch(statusColorOnText);
 
+      // D1 rule: No status color border (neutral border + dot)
+      expect(source).not.toMatch(statusColorBorder);
+
+      // D1 rule: No status color fill behind text
+      expect(source).not.toMatch(statusColorFillOnText);
+
       // D1 rule: font-mono only on allowed items (branches, paths, diff counts, timers, code/pre blocks)
       // Disallowed on task IDs, task numbers, token counts, costs, timestamps, file counts
       expect(source).not.toMatch(/task\.id[^<]*font-mono/);
@@ -581,5 +835,90 @@ describe("[ADR-0016.D4] design constraints source scan", () => {
         }
       }
     }
+  });
+});
+
+describe("[ADR-0017.D2] event refresh deduplication, ordering, and cap handling", () => {
+  test("merging overlapping pages yields no duplicate ids and keeps order", () => {
+    const existing: DbEvent[] = [
+      { id: 1, session_id: 1, task_id: null, kind: "handoff", payload: {}, created_at: "2026-11-28T14:00:00Z" },
+      { id: 2, session_id: 1, task_id: null, kind: "tool", payload: {}, created_at: "2026-11-28T14:01:00Z" },
+      { id: 3, session_id: 1, task_id: null, kind: "agent_message", payload: {}, created_at: "2026-11-28T14:02:00Z" },
+    ];
+    const incoming: DbEvent[] = [
+      { id: 2, session_id: 1, task_id: null, kind: "tool", payload: {}, created_at: "2026-11-28T14:01:00Z" },
+      { id: 3, session_id: 1, task_id: null, kind: "agent_message", payload: {}, created_at: "2026-11-28T14:02:00Z" },
+      { id: 4, session_id: 1, task_id: null, kind: "agent_thought", payload: {}, created_at: "2026-11-28T14:03:00Z" },
+    ];
+
+    const result = mergeEvents(existing, incoming);
+    expect(result.events.map((e) => e.id)).toEqual([1, 2, 3, 4]);
+    expect(result.truncated).toBe(false);
+  });
+
+  test("reaching 5,000 cap stops appending, preserves loaded events, and returns truncated flag", () => {
+    const existing: DbEvent[] = Array.from({ length: 5000 }, (_, i) => ({
+      id: i + 1,
+      session_id: 1,
+      task_id: null,
+      kind: "tool",
+      payload: {},
+      created_at: "2026-11-28T14:00:00Z",
+    }));
+    const incoming: DbEvent[] = [
+      { id: 5001, session_id: 1, task_id: null, kind: "tool", payload: {}, created_at: "2026-11-28T15:00:00Z" },
+    ];
+
+    const result = mergeEvents(existing, incoming, 5000);
+    expect(result.events.length).toBe(5000);
+    expect(result.truncated).toBe(true);
+    expect(result.events[0].id).toBe(1);
+    expect(result.events[4999].id).toBe(5000);
+  });
+
+  test("serialized pass picking up events that arrived during the first pass", async () => {
+    let inFlight = false;
+    let pending = false;
+    const passCalls: number[] = [];
+    let availableEvents: DbEvent[] = [
+      { id: 1, session_id: 1, task_id: null, kind: "tool", payload: {}, created_at: "2026-11-28T14:00:00Z" },
+    ];
+    let loadedEvents: DbEvent[] = [];
+
+    const runPass = async () => {
+      if (inFlight) {
+        pending = true;
+        return;
+      }
+      inFlight = true;
+      try {
+        passCalls.push(availableEvents.length);
+        // Simulate async merge with available events
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 10);
+        await promise;
+        loadedEvents = mergeEvents(loadedEvents, availableEvents).events;
+      } finally {
+        inFlight = false;
+        if (pending) {
+          pending = false;
+          await runPass();
+        }
+      }
+    };
+
+    // Pass 1 starts
+    const p1 = runPass();
+    // Event arrives while pass 1 is in-flight
+    availableEvents = [
+      ...availableEvents,
+      { id: 2, session_id: 1, task_id: null, kind: "tool", payload: {}, created_at: "2026-11-28T14:01:00Z" },
+    ];
+    const p2 = runPass();
+
+    await Promise.all([p1, p2]);
+
+    expect(passCalls.length).toBe(2);
+    expect(loadedEvents.map((e) => e.id)).toEqual([1, 2]);
   });
 });

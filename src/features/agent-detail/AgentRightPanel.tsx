@@ -200,7 +200,9 @@ export function AgentRightPanel({
                     <span>{event.created_at}</span>
                   </div>
                   <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs text-muted-foreground">
-                    {JSON.stringify(event.payload, null, 2)}
+                    {event.kind === "agent_log" && event.payload && typeof event.payload === "object" && !Array.isArray(event.payload) && "text" in event.payload && typeof event.payload.text === "string"
+                      ? event.payload.text
+                      : JSON.stringify(event.payload, null, 2)}
                   </pre>
                 </div>
               ))}

@@ -24,6 +24,12 @@ serde = { version = "1", features = ["derive"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 regex = "1"
 serde_json = "1"
+agent-client-protocol = { version = "=5.6.1", features = ["process"] }
+tokio = { version = "1", features = ["sync", "time", "macros"] }
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
 
 
 # Smaller, faster-linking dev builds: keep file:line backtraces for our crate,
