@@ -5,6 +5,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use tauri::State;
 
+// REGISTRY is empty until a decision gives a preference behaviour, so only tests construct these variants.
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 enum SettingType { Boolean, String }
 
