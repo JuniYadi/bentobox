@@ -1,6 +1,7 @@
 // @adr ADR-0005.D1
 // @adr ADR-0020.D2
 // @adr ADR-0021.D2
+// @adr ADR-0011.D1
 use regex::Regex;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,7 @@ use std::{
 };
 use tauri::State;
 
-const LATEST_SCHEMA_VERSION: i64 = 7;
+const LATEST_SCHEMA_VERSION: i64 = 8;
 
 #[derive(Clone)]
 pub struct Store(std::sync::Arc<Mutex<Connection>>);
@@ -98,6 +99,15 @@ impl Store {
         }
         if version < 7 {
             tx.execute_batch("ALTER TABLE sessions ADD COLUMN model TEXT; PRAGMA user_version = 7;").map_err(|e| e.to_string())?;
+        }
+        if version < 8 {
+            tx.execute_batch(
+                "CREATE TABLE teams (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, role TEXT NOT NULL CHECK(role IN ('orchestrator','sub_agents','review')), is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
+                 CREATE UNIQUE INDEX teams_default_role ON teams(role) WHERE is_default = 1;
+                 CREATE TABLE team_steps (team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE, position INTEGER NOT NULL, harness TEXT NOT NULL, model TEXT, effort TEXT CHECK(effort IN ('low','medium','high') OR effort IS NULL), PRIMARY KEY(team_id, position));
+                 ALTER TABLE sessions ADD COLUMN team TEXT;
+                 PRAGMA user_version = 8;"
+            ).map_err(|e| e.to_string())?;
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(Self(std::sync::Arc::new(Mutex::new(conn))))

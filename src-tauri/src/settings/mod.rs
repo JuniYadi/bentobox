@@ -1,19 +1,22 @@
 // @adr ADR-0016.D5
+// @adr ADR-0012.D1
 use crate::db::Store;
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use tauri::State;
 
-// REGISTRY is empty until a decision gives a preference behaviour, so only tests construct these variants.
+// Boolean remains available for typed preferences defined by future decisions.
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
 enum SettingType { Boolean, String }
 
 struct SettingDef { key: &'static str, value_type: SettingType }
 
-// No accepted decision currently defines a persisted preference.
-const REGISTRY: &[SettingDef] = &[];
+const REGISTRY: &[SettingDef] = &[
+    SettingDef { key: "routing.default_effort", value_type: SettingType::String },
+    SettingDef { key: "routing.unavailable_action", value_type: SettingType::String },
+];
 
 fn validate<'a>(registry: &'a [SettingDef], key: &str, value: Option<&Value>) -> Result<&'a SettingDef, String> {
     let def = registry.iter().find(|def| def.key == key).ok_or_else(|| format!("unknown setting: {key}"))?;
@@ -47,6 +50,12 @@ impl Store {
 
     fn setting_set_with(&self, registry: &[SettingDef], key: &str, value: &Value) -> Result<(), String> {
         let def = validate(registry, key, Some(value))?;
+        let allowed = match key {
+            "routing.default_effort" => matches!(value.as_str(), Some("low" | "medium" | "high")),
+            "routing.unavailable_action" => matches!(value.as_str(), Some("ask" | "fallback")),
+            _ => true,
+        };
+        if !allowed { return Err(format!("invalid value for setting: {key}")); }
         let raw = serde_json::to_string(value).map_err(|e| e.to_string())?;
         self.connection()?.execute("INSERT INTO settings (key, value_type, value) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value_type = excluded.value_type, value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", params![key, def.value_type.name(), raw]).map_err(|e| e.to_string())?;
         Ok(())

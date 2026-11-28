@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DetectedHarness } from "../agent/api";
+import type { Team } from "../teams/api";
 import type { Plan } from "./types";
 import {
   buildOneTaskPlan,
@@ -8,8 +9,11 @@ import {
   harnessMonogram,
   modelPickerState,
   phaseStepState,
+  resolveSendRoute,
   sendState,
   toggleSessionConcise,
+  unavailableRouteDecision,
+  inlineRouteActiveTaskError,
 } from "./composer";
 
 const sampleHarnesses: DetectedHarness[] = [
@@ -129,6 +133,45 @@ describe("[ADR-0017.D4] buildOneTaskPlan shape", () => {
     const withoutModel = buildOneTaskPlan("Task without model", "omp", true, "m3");
     expect(withoutModel[0].model).toBeUndefined();
   });
+});
+
+test("[ADR-0012.D1] carries the selected team into the task", () => {
+  expect(buildOneTaskPlan("goal", "codex", false, "id", "model", { team: "team-id" })[0].team).toBe("team-id");
+});
+
+test("[ADR-0012.D1] pins explicit harness routes", () => {
+  expect(buildOneTaskPlan("goal", "codex", false, "id", "model", { pinned: true })[0]).toMatchObject({ team: "", pinned: true });
+});
+
+test("[ADR-0012.D1] unavailable routes ask or fall back", () => {
+  expect(unavailableRouteDecision("codex", false, "ask")).toEqual({ useFallback: false, error: expect.stringContaining("codex") });
+  expect(unavailableRouteDecision("codex", false, "fallback")).toEqual({ useFallback: true, error: null });
+  expect(unavailableRouteDecision("codex", true, "fallback")).toEqual({ useFallback: false, error: null });
+});
+
+test("[ADR-0012.D1] blocks routed messages on running and review tasks until stopped", () => {
+  for (const status of ["running", "review"] as const) {
+    expect(inlineRouteActiveTaskError(true, status)).toBe("Inline routes cannot change an active agent. Stop the task first before routing a new message.");
+    expect(inlineRouteActiveTaskError(false, status)).toBeNull();
+  }
+  expect(inlineRouteActiveTaskError(true, "completed")).toBeNull();
+  expect(inlineRouteActiveTaskError(true, undefined)).toBeNull();
+});
+
+test("[ADR-0012.D1] resolves routes without changing the session team", () => {
+  const teams: Team[] = [{ id: "t1", name: "cheap", role: "orchestrator", isDefault: true, steps: [{ harness: "omp", model: "local", effort: null }] }, { id: "t2", name: "review", role: "review", isDefault: false, steps: [{ harness: "codex", model: "review-model", effort: null }] }];
+  const input = { route: null, selectedHarness: "omp", sessionTeam: "t1", sessionModel: "original", teams, runnableHarnesses: ["codex", "omp"], unavailableAction: "ask" as const };
+  const harnessRoute = { kind: "harness" as const, harness: "codex", model: "routed", effort: null };
+  expect(resolveSendRoute({ ...input, route: harnessRoute })).toEqual({ error: null, harness: "codex", model: "routed", team: "", pinned: true });
+  expect(resolveSendRoute({ ...input, route: { kind: "team", name: "review" } })).toEqual({ error: null, harness: "codex", model: "review-model", team: "t2", pinned: false });
+  expect(resolveSendRoute(input)).toEqual({ error: null, harness: "omp", model: "local", team: "t1", pinned: false });
+  expect(input.sessionTeam).toBe("t1");
+  for (const taskStatus of ["running", "review"] as const) {
+    expect(resolveSendRoute({ ...input, route: harnessRoute, taskStatus })).toEqual({ error: "Inline routes cannot change an active agent. Stop the task first before routing a new message." });
+  }
+  expect(resolveSendRoute({ ...input, route: harnessRoute, runnableHarnesses: ["omp"] })).toEqual({ error: expect.stringContaining("codex is unavailable") });
+  expect(resolveSendRoute({ ...input, route: harnessRoute, runnableHarnesses: ["omp"], unavailableAction: "fallback" })).toEqual({ error: null, harness: "omp", model: "local", team: "t1", pinned: false });
+  expect(resolveSendRoute({ ...input, route: harnessRoute, runnableHarnesses: ["omp"], unavailableAction: "fallback", sessionTeam: null })).toEqual({ error: null, harness: "omp", model: "original", team: "", pinned: false });
 });
 
 describe("[ADR-0017.D4] composer send disabled reasons", () => {

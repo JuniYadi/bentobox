@@ -4,13 +4,13 @@ decisions:
   D1:
     title: Teams bind a role to an ordered harness/model:effort fallback chain
     state: accepted
-    paths: ["src-tauri/src/teams/**", "src/features/teams/**"]
+    paths: ["src-tauri/src/teams/**", "src/features/teams/**", "src-tauri/src/db/**", "src-tauri/src/session/**", "src-tauri/src/runner/**", "src/features/session/**", "src/features/settings/**"]
     protected: false
     use_cases: []
   D2:
     title: Teams are generated from detected subscriptions by user rules, previewed before apply
     state: accepted
-    paths: ["src-tauri/src/teams/**", "src/features/teams/**"]
+    paths: ["src-tauri/src/teams/**", "src/features/teams/**", "src/features/settings/**"]
     protected: false
     use_cases: []
 ---

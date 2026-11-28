@@ -5,12 +5,13 @@ import { SettingsView, settingsSections } from "./SettingsView";
 
 describe("[ADR-0016.D5] settings view", () => {
   test("navigation contains exactly the data-backed sections", () => {
-    expect([...settingsSections]).toEqual(["Harnesses", "GitHub"]);
+    expect([...settingsSections]).toEqual(["Harnesses", "Teams", "GitHub"]);
     const html = renderToStaticMarkup(<SettingsView onClose={() => {}} />);
     const nav = html.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/)?.[0];
     expect(nav).toBeDefined();
-    expect(nav?.match(/<button\b/g)).toHaveLength(2);
+    expect(nav?.match(/<button\b/g)).toHaveLength(3);
     expect(nav).toMatch(/>Harnesses<\/button>/);
+    expect(nav).toMatch(/>Teams<\/button>/);
     expect(nav).toMatch(/>GitHub<\/button>/);
     expect(html).not.toContain("Worktree isolation");
     expect(html).toContain("Installed harnesses");

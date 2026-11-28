@@ -9,6 +9,7 @@ pub mod handoff;
 pub mod session;
 pub mod settings;
 pub mod runner;
+pub mod teams;
 
 pub mod project;
 #[tauri::command]
@@ -68,6 +69,13 @@ pub fn run() {
             session::session_set_worktree,
             session::session_set_concise,
             session::session_set_model,
+            session::session_set_team,
+            teams::teams_list,
+            teams::teams_upsert,
+            teams::teams_delete,
+            teams::teams_set_default,
+            teams::teams_generate_preview,
+            teams::teams_apply_generated,
             runner::runner_start,
             runner::runner_stop,
             runner::runner_respond_permission,

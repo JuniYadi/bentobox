@@ -40,6 +40,7 @@ const sampleSession: Session & { worktreeBranch?: string } = {
   optInWorktree: true,
   conciseReplies: false,
   model: null,
+  team: null,
   subAgents: [],
   worktreeBranch: "task/gh-bridge",
 };

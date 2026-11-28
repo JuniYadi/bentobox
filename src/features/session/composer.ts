@@ -1,4 +1,6 @@
 import type { DetectedHarness, ModelCatalog, ModelOption } from "../agent/api";
+import type { InlineRoute } from "../routing/parser";
+import type { Team } from "../teams/api";
 import type { Plan, PlanTask } from "./types";
 
 /** @adr ADR-0017.D4 */
@@ -25,12 +27,13 @@ export interface ComposerHarnessOption {
 }
 
 /** @adr ADR-0017.D4 */
-export function buildOneTaskPlan(text: string, harnessId: string, worktree: boolean, uniqueSuffix: string, model?: string | null): PlanTask[] {
+export function buildOneTaskPlan(text: string, harnessId: string, worktree: boolean, uniqueSuffix: string, model?: string | null, options?: { team?: string; pinned?: boolean }): PlanTask[] {
   return [
     {
       id: `task-${uniqueSuffix}`,
       title: text.trim(),
-      team: "",
+      team: options?.team ?? "",
+      ...(options?.pinned ? { pinned: true } : {}),
       harness: harnessId,
       ...(model !== undefined ? { model } : {}),
       worktree,
@@ -40,6 +43,47 @@ export function buildOneTaskPlan(text: string, harnessId: string, worktree: bool
       status: "queued",
     },
   ];
+}
+
+/** @adr ADR-0012.D1 */
+export function unavailableRouteDecision(harness: string, runnable: boolean, action: "ask" | "fallback"): { useFallback: boolean; error: string | null } {
+  if (runnable) return { useFallback: false, error: null };
+  if (action === "fallback") return { useFallback: true, error: null };
+  return { useFallback: false, error: `${harness} is unavailable. Remove the route to send with the session team or selected harness.` };
+}
+
+/** @adr ADR-0012.D1 */
+export function inlineRouteActiveTaskError(hasRoute: boolean, status: PlanTask["status"] | undefined): string | null {
+  return hasRoute && (status === "running" || status === "review")
+    ? "Inline routes cannot change an active agent. Stop the task first before routing a new message."
+    : null;
+}
+
+/** @adr ADR-0012.D1 */
+export function resolveSendRoute(input: { route: InlineRoute | null; taskStatus?: PlanTask["status"]; selectedHarness: string | null; sessionTeam: string | null; sessionModel: string | null; teams: Team[]; runnableHarnesses: string[]; unavailableAction: "ask" | "fallback" }):
+  | { error: string; harness?: never; model?: never; team?: never; pinned?: never }
+  | { error: null; harness: string; model: string | null; team: string; pinned: boolean } {
+  const activeError = inlineRouteActiveTaskError(input.route !== null, input.taskStatus);
+  if (activeError) return { error: activeError };
+  if (input.route?.kind === "team") {
+    const name = input.route.name;
+    const team = input.teams.find((item) => item.name === name);
+    if (!team?.steps[0]) return { error: "The selected team has no steps." };
+    return { error: null, harness: team.steps[0].harness, model: team.steps[0].model, team: team.id, pinned: false };
+  }
+  if (input.route?.kind === "harness") {
+    const route = input.route;
+    const decision = unavailableRouteDecision(route.harness, input.runnableHarnesses.includes(route.harness), input.unavailableAction);
+    if (decision.error) return { error: decision.error };
+    if (!decision.useFallback) return { error: null, harness: route.harness, model: route.model, team: "", pinned: true };
+  }
+  if (input.sessionTeam) {
+    const first = input.teams.find((item) => item.id === input.sessionTeam)?.steps[0];
+    if (!first) return { error: "The session team is unavailable. Select a team or choose No team." };
+    return { error: null, harness: first.harness, model: first.model, team: input.sessionTeam, pinned: false };
+  }
+  if (!input.selectedHarness) return { error: "Select a harness or session team for fallback." };
+  return { error: null, harness: input.selectedHarness, model: input.sessionModel, team: "", pinned: false };
 }
 
 /** @adr ADR-0018.D1 */
