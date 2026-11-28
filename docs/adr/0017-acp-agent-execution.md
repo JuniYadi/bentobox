@@ -3,25 +3,25 @@ adr: ADR-0017
 decisions:
   D1:
     title: The backend runs each approved plan task as an ACP agent process in the task's worktree, using the official agent-client-protocol crate
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/runner/**"]
     protected: false
     use_cases: []
   D2:
     title: Allow and Deny answer session/request_permission, Stop cancels the turn, Steer queues a prompt; Pause and Take over stay disabled
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/runner/**", "src/features/agent-detail/**"]
     protected: false
     use_cases: []
   D3:
     title: Every agent update is appended to the event log in the shape the agent detail view reads, and the UI refreshes on a Tauri notification
-    state: proposed
+    state: accepted
     paths: ["src-tauri/src/runner/**", "src/features/runner/**"]
     protected: false
     use_cases: []
   D4:
     title: Composer Send creates a one-task plan for the chosen harness, so a user can start an agent without an orchestrator
-    state: proposed
+    state: accepted
     paths: ["src/features/session/**"]
     protected: false
     use_cases: []
